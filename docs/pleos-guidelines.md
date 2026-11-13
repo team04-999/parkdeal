@@ -60,7 +60,7 @@ PT 기술 Q&A에서 "왜 이 API를 썼나"에 답하는 근거다. 쓸 수 있�
 
 | 규칙 | ParkDeal에서 |
 |---|---|
-| 기어·속도 같은 표준 차량 데이터는 AAOS Car API(`CarPropertyManager`)를 먼저 쓰고, OEM 전용 기능은 Pleos SDK를 쓴다 (권장) | 기어를 어디서 읽을지 정한다. 기술 활용성 항목은 Pleos SDK 활용을 보므로 Vehicle SDK가 유리할 수 있다. 결정과 이유를 `docs/architecture.md` 에 남긴다 |
+| 기어·속도 같은 표준 차량 데이터는 AAOS Car API(`CarPropertyManager`)를 먼저 쓰고, OEM 전용 기능은 Pleos SDK를 쓴다 (권장) | 기어는 Vehicle SDK로 읽는다. 기어 입력을 인터페이스로 분리해 양산 탑재 때 `CarPropertyManager` 로 바꿀 수 있게 한다. 이유는 [`architecture.md`](architecture.md#기어는-pleos-vehicle-sdk로-읽는다-2026-11-13) |
 | 차종마다 지원이 다르다. `checkXXXCapabilities`·`isSupported` 로 확인하고 차종명으로 분기하지 않는다 | 기어·위치 지원 여부를 확인하고, 없으면 수동으로 주차를 시작하게 한다 |
 | NaviHelper는 내비 탑재 차량에서만 완전 호환, FusedLocation은 차종별(`isSupported`), TTS·STT는 완전 호환 | 핵심 경로는 TTS·STT로 만들고 NaviHelper·FusedLocation은 지원 확인 뒤 쓴다 |
 | 오프라인·저대역폭 대비: 캐시, 타임아웃 있는 재시도, 오프라인 안내 (권장) | 시연장 인터넷이 불안정할 수 있다. 주차장 목록을 캐시해서 서버가 응답하지 않아도 시연이 된다 |
