@@ -1,0 +1,35 @@
+name: PR 규칙
+
+# CONTRIBUTING.md 의 규칙 중 기계적으로 판정할 수 있는 것을 검사한다.
+# pull_request(포크 PR 은 읽기 전용 토큰)만 쓴다. pull_request_target 은 쓰지 않는다.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: 규칙 검사기 테스트
+        working-directory: .github/scripts
+        run: python3 -m unittest test_pr_rules
+
+      # 제목은 사용자 입력이다. run 본문에 직접 보간하지 않고 환경변수로 넘긴다 (셸 주입 방지)
+      - name: PR 제목 형식
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: python3 .github/scripts/pr_rules.py title "$PR_TITLE"
+
+      - name: 커밋 이메일
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git log --format='%ae%n%ce' "$BASE_SHA..$HEAD_SHA" | python3 .github/scripts/pr_rules.py emails
