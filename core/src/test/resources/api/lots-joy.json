@@ -1,0 +1,64 @@
+{
+  "lots": [
+    {
+      "id": 6624,
+      "name": "남부순환로 1738 주차장",
+      "kind": "building",
+      "lat": 37.482052,
+      "lng": 126.942983,
+      "entrance": null,
+      "totalSpaces": null,
+      "heightMm": null,
+      "valet": null,
+      "valetFee": null,
+      "alerts": [
+        "ev",
+        "mechanical",
+        "suv"
+      ],
+      "fee": {
+        "firstMin": 60,
+        "firstFee": 0,
+        "unitMin": 30,
+        "unitFee": 2000,
+        "dailyMax": 8000,
+        "flatFee": null,
+        "source": "store_fee",
+        "observedAt": "2026-11-09T15:00:00.000Z"
+      },
+      "distanceM": 0
+    },
+    {
+      "id": 6614,
+      "name": "남부순환로 1734 주차장",
+      "kind": "building",
+      "lat": 37.4820671,
+      "lng": 126.9427368,
+      "entrance": null,
+      "totalSpaces": null,
+      "heightMm": null,
+      "valet": null,
+      "valetFee": null,
+      "alerts": [
+        "mechanical"
+      ],
+      "fee": null,
+      "distanceM": 22
+    },
+    {
+      "id": 6613,
+      "name": "남부순환로 1734 주차장",
+      "kind": "building",
+      "lat": 37.4820013,
+      "lng": 126.9426966,
+      "entrance": null,
+      "totalSpaces": null,
+      "heightMm": null,
+      "valet": null,
+      "valetFee": null,
+      "alerts": [],
+      "fee": null,
+      "distanceM": 26
+    }
+  ]
+}
