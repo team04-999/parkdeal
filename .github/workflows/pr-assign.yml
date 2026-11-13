@@ -13,7 +13,7 @@ permissions:
 jobs:
   assign:
     # 봇 계정은 담당자로 지정할 수 없고, 이미 담당자가 있으면 건드리지 않는다
-    if: github.event.pull_request.user.type != 'Bot' && toJSON(github.event.pull_request.assignees) == '[]'
+    if: github.event.pull_request.user.type != 'Bot' && !github.event.pull_request.assignees[0]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
