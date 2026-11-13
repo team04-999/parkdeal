@@ -1,0 +1,25 @@
+name: PR 담당자 지정
+
+# PR 을 연 사람을 담당자(assignee)로 지정한다.
+# 포크 PR 은 pull_request 토큰이 읽기 전용이라 pull_request_target 을 쓴다.
+# pull_request_target 은 base 권한으로 돌기 때문에 PR 코드를 체크아웃하거나 실행하지 않는다.
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  assign:
+    # 봇 계정은 담당자로 지정할 수 없고, 이미 담당자가 있으면 건드리지 않는다
+    if: github.event.pull_request.user.type != 'Bot' && toJSON(github.event.pull_request.assignees) == '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: 작성자를 담당자로 지정
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-assignee "$AUTHOR"
