@@ -41,4 +41,5 @@ scripts/  데이터·빌드 보조 스크립트
 - 대외 공개 SDK 만 쓴다: Vehicle, NaviHelper, TextToSpeech, SpeechToText, FusedLocation.
   Gleo(AI App Schema) 연동은 팀이 승인을 요청할 수 없으므로 없어도 동작해야 한다.
 - 주행 중(D단) 화면 사용이 제한된다. 주행 중 안내는 TTS·알림으로 한다.
+- 화면·주행 중 동작·차량 API를 설계하거나 리뷰할 때 [`docs/pleos-guidelines.md`](docs/pleos-guidelines.md)와 대조한다.
 - 에뮬레이터: AVD 는 cold boot 로 설정한다 (quick boot 에서는 VHAL 을 쓸 수 없다).
