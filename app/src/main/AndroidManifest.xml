@@ -12,8 +12,8 @@
             android:name=".MainActivity"
             android:launchMode="singleTop"
             android:exported="true">
-            <!-- 정차 중에만 쓰는 화면이 아니라 주행 중에도 띄울 수 있게 선언한다 -->
-            <meta-data android:name="distractionOptimized" android:value="true" />
+            <!-- distractionOptimized 를 선언하지 않는다. 주행 중 안내는 TTS 로 하고,
+                 화면은 정차 후에 쓴다 (docs/pleos-guidelines.md 1장) -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
