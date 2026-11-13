@@ -5,6 +5,8 @@ build/
 local.properties
 captures/
 *.apk
+# 심사용 release APK 는 커밋한다 (공모전 제출 요건: apk/ 폴더)
+!apk/*.apk
 *.aab
 *.keystore
 *.jks
