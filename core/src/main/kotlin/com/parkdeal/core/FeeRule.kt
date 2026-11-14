@@ -1,13 +1,17 @@
 package com.parkdeal.core
 
 import com.parkdeal.core.api.Fee
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 
-/** 주차 요금 규칙. 서버의 대표 요금([Fee])에서 만든다. */
+/** 주차 요금 규칙. 서버의 대표 요금([Fee])에서 만든다. 주차 세션과 함께 기기에 저장한다. */
+@Serializable
 sealed interface FeeRule {
     /** [minutes] 분 주차했을 때 요금(원). 0분이면 0원. */
     fun feeFor(minutes: Int): Int
 
     /** 최초 [baseMin] 분 [baseFee] 원, 이후 [unitMin] 분마다 [unitFee] 원(올림), 일 최대 [dailyMax] 원. */
+    @Serializable @SerialName("metered")
     data class Metered(val baseMin: Int, val baseFee: Int, val unitMin: Int, val unitFee: Int, val dailyMax: Int?) : FeeRule {
         override fun feeFor(minutes: Int): Int {
             if (minutes <= 0) return 0
@@ -19,6 +23,7 @@ sealed interface FeeRule {
     }
 
     /** 시간과 관계없는 정액. */
+    @Serializable @SerialName("flat")
     data class Flat(val fee: Int) : FeeRule {
         override fun feeFor(minutes: Int): Int = if (minutes <= 0) 0 else fee
     }
