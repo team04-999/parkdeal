@@ -13,7 +13,12 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+
+        // 주차 데이터 API (parkdeal-server). 실패하면 캐시 → 내장 스냅샷으로 동작한다
+        buildConfigField("String", "PARKDEAL_API_BASE", "\"https://parkdeal-api.daeuk.cloud\"")
     }
+
+    buildFeatures { buildConfig = true }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

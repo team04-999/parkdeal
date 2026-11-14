@@ -17,6 +17,13 @@ hb=$!
 trap 'kill $hb 2>/dev/null || true' EXIT
 sleep 1
 
+# Virtual Console 화면과 같은 순서: P 로 가기 전에 속도·페달을 0 으로 맞춘다.
+# 다른 클라이언트가 차를 움직이던 중이면 이것 없이는 P 가 되어도 속도가 남아 주행 규제가 풀리지 않는다
+if [ "$gear" = Park ]; then
+  c=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "$VC/vehicle/controls?speed=0&accelerator=0&brake=0&steering=0")
+  [ "$c" = 200 ] || { echo "정차(속도 0) 명령 실패: HTTP $c" >&2; exit 1; }
+fi
+
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$VC/vehicle/gear?gear=$gear")
 [ "$code" = 200 ] || { echo "기어 명령 실패: HTTP $code" >&2; exit 1; }
 
