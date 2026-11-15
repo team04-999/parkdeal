@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 기어(P 진입·출차) 읽기: Pleos Vehicle SDK -->
     <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />
+    <!-- 전기차 여부(배터리 잔량을 읽을 수 있는지): 전기차 불가 주차장 거르기 -->
+    <uses-permission android:name="pleos.car.permission.CAR_ENERGY" />
     <!-- 내비 목적지 받기와 주차장으로 경로 바꾸기: Pleos NaviHelper -->
     <uses-permission android:name="pleos.car.permission.NAVI_ROUTE" />
     <uses-permission android:name="pleos.car.permission.NAVI_ROUTE_SEARCH" />

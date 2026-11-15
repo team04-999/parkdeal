@@ -15,6 +15,7 @@ import com.parkdeal.app.data.AssetSnapshot
 import com.parkdeal.app.data.FileResponseCache
 import com.parkdeal.app.data.HttpUrlTransport
 import com.parkdeal.app.drive.DrivingRestriction
+import com.parkdeal.app.drive.VehicleProfile
 import com.parkdeal.app.navi.NaviSource
 import com.parkdeal.app.voice.Listener
 import com.parkdeal.core.voice.VoiceCommand
@@ -77,6 +78,8 @@ class MainActivity : Activity() {
     private val follower = DestinationFollower()
     private val navi by lazy { NaviSource(this, ::onNaviDestination, ::onRemain, ::onWaypointArrived) }
     private val approach = ApproachTrigger()
+    /** 이 차의 특성. 전기차면 전기차 불가 주차장을 맨 뒤로 보낸다. */
+    private var vehicle = com.parkdeal.core.Vehicle.UNKNOWN
     private val driving by lazy { DrivingRestriction(this) { render() } }
     /** 내비 목적지로 추천을 만들었으면 불러온 뒤 한 번 브리핑한다. */
     private var briefPending = false
@@ -106,6 +109,7 @@ class MainActivity : Activity() {
         voice // TTS·STT 엔진을 미리 띄워 첫 안내·첫 질문이 늦지 않게
         listener
         driving
+        VehicleProfile.detect(this) { v -> vehicle = v; Log.d(TAG, "차량 $v"); recompute() }
         navi.start()
         demo(intent)
     }
@@ -238,7 +242,7 @@ class MainActivity : Activity() {
 
     private fun recompute() {
         val d = dest ?: return render()
-        recommendation = Recommender.recommend(d, lots ?: LotsResponse(emptyList()), stayMin)
+        recommendation = Recommender.recommend(d, lots ?: LotsResponse(emptyList()), stayMin, vehicle)
         index = index.coerceIn(0, maxOf(0, (recommendation?.options?.size ?: 1) - 1))
         render()
     }
@@ -269,6 +273,10 @@ class MainActivity : Activity() {
 
     private fun render() {
         if (!::content.isInitialized) return
+        // 주간·야간 테마: 시스템(Pleos) 설정을 따른다
+        Ui.theme((resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES)
+        content.setBackgroundColor(Ui.BG)
         syncCandidate()
         val st = tracker.state
         val r = recommendation
@@ -301,7 +309,8 @@ class MainActivity : Activity() {
             addView(Ui.vbox(this@MainActivity, 6).apply {
                 val loading = place != null && place != shownPlace
                 addView(Ui.text(this@MainActivity,
-                    if (loading) "${place?.name} 주변을 찾는 중…" else "${shownName()} 주변 · 800m 이내",
+                    if (loading) "${place?.name} 주변을 찾는 중…" else "${shownName()} 주변 · 800m 이내" +
+                        r.options.count { it.blocked }.let { n -> if (n > 0) " · 전기차 불가 ${n}곳 뒤로" else "" },
                     26, if (loading) Ui.ACCENT_TEXT else Ui.MUTED))
                 addView(Ui.text(this@MainActivity, "주차 비교", 48, Ui.TEXT, 900))
             })
@@ -349,14 +358,24 @@ class MainActivity : Activity() {
 
     private fun optionRow(i: Int, o: ParkingOption, selected: Boolean): View = Ui.hbox(this, 24).apply {
         setPadding(dp(28), dp(20), dp(28), dp(20))
-        background = Ui.rounded(Ui.CARD, 28, this@MainActivity, if (selected) Ui.GREEN else null)
+        background = Ui.rounded(Ui.CARD, 28, this@MainActivity, if (selected) Ui.ACCENT else null)
+        if (o.blocked) alpha = 0.55f
         addView(numberPin(i + 1, selected))
         addView(Ui.vbox(this@MainActivity, 6).apply {
-            addView(Ui.text(this@MainActivity, o.name, if (selected) 32 else 28, Ui.TEXT, 700).apply { maxLines = 1 })
-            if (o.reason.isNotEmpty()) addView(Ui.text(this@MainActivity, o.reason, 22, Ui.GREEN, 700).apply { maxLines = 1 })
-            addView(Ui.text(this@MainActivity, "도보 ${o.walkMinutes}분" + if (o.fee == null) " · 요금 정보 없음" else "", 22, Ui.MUTED))
+            addView(Ui.text(this@MainActivity, o.name, if (selected) 30 else 28, Ui.TEXT, 700).apply { maxLines = 1 })
+            if (o.reason.isNotEmpty()) {
+                // 혜택 한 줄 + 조건(평일만·18:00 이후·1대까지)
+                val limits = o.how?.limits.orEmpty()
+                addView(Ui.text(this@MainActivity, (listOf(o.reason) + limits).joinToString(" · "), 22, Ui.ACCENT_TEXT, 700).apply { maxLines = 1 })
+            }
+            addView(Ui.hbox(this@MainActivity, 8).apply {
+                addView(Ui.text(this@MainActivity, "도보 ${o.walkMinutes}분", 21, Ui.MUTED))
+                if (o.how?.needsReview == true) addView(tag("혜택 확인 필요", warn = true))
+                o.notes.take(if (selected) 4 else 3).forEachIndexed { k, n -> addView(tag(n, warn = o.blocked && k == 0)) }
+            })
         }, lp(0, WRAP, 1f))
-        addView(Ui.text(this@MainActivity, Ui.won(o.fee), if (selected) 48 else 36, if (o.fee == 0) Ui.GREEN else Ui.TEXT, if (selected) 900 else 700))
+        addView(Ui.text(this@MainActivity, if (o.blocked) "진입 불가" else Ui.won(o.fee), if (selected) 44 else 34,
+            if (o.blocked) Ui.AMBER else if (o.fee == 0) Ui.GREEN else Ui.TEXT, 900))
         // 카드를 누르면 바로 경유지로: 옆의 내비 지도에 그 주차장 경로가 그려진다 (PRD S2)
         setOnClickListener { index = i; guide(o, speak = false); render() }
     }
@@ -378,6 +397,7 @@ class MainActivity : Activity() {
                 addView(Ui.text(this@MainActivity, s.lotName, fit(64), Ui.TEXT, 900).apply { maxLines = 2 })
             }
             if (s.reason.isNotEmpty()) addView(pill(s.reason, 28, Ui.GREEN, Ui.GREEN_BG), lp(WRAP, WRAP))
+            if (justParked && s.hasBenefit) s.redeemHint?.let { addView(Ui.text(this@MainActivity, "등록 방법: $it", 30, Ui.ACCENT_TEXT, 700)) }
             if (justParked) addView(Ui.text(this@MainActivity, "${s.destName}까지 걸어서 ${s.walkMinutes}분", 30, Ui.TEXT2, 700))
             addView(Ui.hbox(this@MainActivity, 20).apply {
                 addView(stat("주차한 시간", durationText(s.elapsedMin(now)), Ui.TEXT), lp(0, WRAP, 1f))
@@ -413,6 +433,7 @@ class MainActivity : Activity() {
             addView(Ui.text(this@MainActivity,
                 if (store) "${s.storeName}에서\n무료 주차 등록하셨나요?" else "${s.lotName}\n주차 요금을 확인하세요",
                 fit(64), Ui.TEXT, 900).apply { setLineSpacing(0f, 1.15f) })
+            if (store) s.redeemHint?.let { addView(Ui.text(this@MainActivity, "등록 방법: $it", 28, Ui.ACCENT_TEXT, 700)) }
             if (fee != null) {
                 val h = durationText(fee.minutes)
                 addView(Ui.text(this@MainActivity, when {
@@ -672,14 +693,20 @@ class MainActivity : Activity() {
         layoutParams = lp(dp(size), dp(size))
     }
 
+    /** 주차장 주의 배지 (만차 잦음·기계식·발렛 …). [warn] 이면 주황. */
+    private fun tag(s: String, warn: Boolean = false) = Ui.text(this, s, 19, if (warn) Ui.AMBER else Ui.TEXT2, 700).apply {
+        setPadding(dp(12), dp(4), dp(12), dp(4))
+        background = Ui.rounded(if (warn) Ui.AMBER_BG else Ui.RAISED, 10, this@MainActivity)
+    }
+
     private fun pill(s: String, size: Int, fg: Int, bg: Int) = Ui.text(this, s, size, fg, 700).apply {
         setPadding(dp(28), dp(14), dp(28), dp(14)); background = Ui.rounded(bg, 999, this@MainActivity)
     }
 
-    private fun numberPin(n: Int, selected: Boolean) = Ui.text(this, "$n", if (selected) 30 else 26, if (selected) Ui.BG else Ui.TEXT, 900).apply {
+    private fun numberPin(n: Int, selected: Boolean) = Ui.text(this, "$n", if (selected) 30 else 26, if (selected) Ui.ON_ACCENT else Ui.TEXT, 900).apply {
         gravity = Gravity.CENTER
         val s = if (selected) 60 else 50
-        background = Ui.rounded(if (selected) Ui.GREEN else Ui.PIN, 999, this@MainActivity)
+        background = Ui.rounded(if (selected) Ui.ACCENT else Ui.PIN, 999, this@MainActivity)
         layoutParams = lp(dp(s), dp(s))
     }
 

@@ -13,23 +13,41 @@ import android.widget.TextView
 
 /** 화면 색·글자·버튼. 크기는 앱 영역 1680×1210 기준 dp. 어두운 배경에 대비 4.5:1 이상 (docs/pleos-guidelines.md 2장). */
 object Ui {
-    val BG = Color.parseColor("#0E1013")
-    val CARD = Color.parseColor("#1B1F24")
-    val RAISED = Color.parseColor("#262B32")
-    val BUTTON = Color.parseColor("#2C323A")
-    val PIN = Color.parseColor("#3A424C")
-    val TEXT = Color.parseColor("#F2F4F6")
-    val TEXT2 = Color.parseColor("#DCE1E6")
-    val MUTED = Color.parseColor("#A7B0BA")
-    val FAINT = Color.parseColor("#8C96A1")
-    val ACCENT = Color.parseColor("#3D8BFF")
-    val ACCENT_TEXT = Color.parseColor("#7DB2FF")
-    val ACCENT_BG = Color.parseColor("#16273F")
-    val GREEN = Color.parseColor("#5BE49B")
-    val GREEN_BG = Color.parseColor("#123524")
-    val AMBER = Color.parseColor("#FFB020")
-    val GLEO = Color.parseColor("#B9A8FF")
-    val GLEO_BG = Color.parseColor("#1E1A33")
+    /** PRD 디자인 체계: Pleos 시스템 화면과 같이 낮에는 밝게, 밤에는 어둡게. 강조색 #5A46FA. */
+    private class Palette(
+        val win: String, val card: String, val card2: String, val ink: String, val ink2: String, val ink3: String,
+        val blue: String, val blueBg: String, val hot: String, val hotBg: String,
+    )
+    private val DAY = Palette("#ECECF0", "#FFFFFF", "#F1F1F5", "#0D0D0D", "#32353F", "#5B606C", "#5A46FA", "#ECE9FF", "#C26A00", "#FFF1DD")
+    private val NIGHT = Palette("#0D0D0D", "#171717", "#32353F", "#FAFAFA", "#AAAAAA", "#8F95A1", "#8D84FB", "#221E3D", "#FF9900", "#33220A")
+    private var p = DAY
+    var night = false
+        private set
+
+    /** 화면을 그리기 전에 부른다. */
+    fun theme(night: Boolean) { this.night = night; p = if (night) NIGHT else DAY }
+
+    private fun c(hex: String) = Color.parseColor(hex)
+    val BG get() = c(p.win)
+    val CARD get() = c(p.card)
+    val RAISED get() = c(p.card2)
+    val BUTTON get() = c(p.card2)
+    val PIN get() = c(p.card2)
+    val TEXT get() = c(p.ink)
+    val TEXT2 get() = c(p.ink2)
+    val MUTED get() = c(p.ink3)
+    val FAINT get() = c(p.ink3)
+    val ACCENT get() = c("#5A46FA")
+    val ACCENT_TEXT get() = c(p.blue)
+    val ACCENT_BG get() = c(p.blueBg)
+    /** 0원·혜택: PRD 는 강조색으로 쓴다 */
+    val GREEN get() = c(p.blue)
+    val GREEN_BG get() = c(p.blueBg)
+    val AMBER get() = c(p.hot)
+    val AMBER_BG get() = c(p.hotBg)
+    val GLEO get() = c(p.blue)
+    val GLEO_BG get() = c(p.blueBg)
+    val ON_ACCENT = Color.WHITE
 
     fun Context.dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
@@ -53,9 +71,9 @@ object Ui {
             text = s
             isAllCaps = false
             setTextSize(TypedValue.COMPLEX_UNIT_DIP, size.toFloat())
-            setTextColor(Color.WHITE)
+            setTextColor(if (primary) ON_ACCENT else TEXT)
             typeface = Typeface.create(Typeface.DEFAULT, 700, false)
-            background = rounded(if (primary) ACCENT else BUTTON, 32, ctx)
+            background = rounded(if (primary) ACCENT else BUTTON, 30, ctx)
             stateListAnimator = null
             gravity = Gravity.CENTER
             minHeight = ctx.dp(height)

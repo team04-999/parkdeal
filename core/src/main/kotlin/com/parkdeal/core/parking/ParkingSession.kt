@@ -24,6 +24,8 @@ data class ParkingSession(
     val destName: String,
     /** 주차장에서 목적지까지 걷는 거리(m). 예전에 저장한 세션에는 없어 0. */
     val walkMeters: Int = 0,
+    /** 혜택 등록 방법 한 줄 (예: "카운터에 차량번호를 알려 주세요"). 모르면 null. */
+    val redeemHint: String? = null,
 ) {
     /** 약 4km/h(분당 67m), 최소 1분. */
     val walkMinutes: Int get() = maxOf(1, (walkMeters + 66) / 67)
@@ -59,7 +61,11 @@ data class ExitReminder(val session: ParkingSession, val endedAt: Long) {
 object ParkingTalk {
     /** P단에 세운 직후: 어디 세웠는지, 혜택을 받으려면 뭘 해야 하는지, 얼마나 걷는지. */
     fun parked(s: ParkingSession): String {
-        val deal = if (s.hasBenefit) " ${s.storeName} 이용하고 주차 등록하세요." else ""
+        val deal = when {
+            !s.hasBenefit -> ""
+            s.redeemHint != null -> " ${s.storeName} 이용하고 ${s.redeemHint}."
+            else -> " ${s.storeName} 이용하고 주차 등록하세요."
+        }
         return "${s.lotName}에 세웠어요.$deal 목적지까지 걸어서 ${s.walkMinutes}분이에요."
     }
 

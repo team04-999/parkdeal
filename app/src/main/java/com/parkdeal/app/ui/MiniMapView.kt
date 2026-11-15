@@ -27,10 +27,10 @@ class MiniMapView(context: Context) : View(context) {
 
     override fun onDraw(c: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
-        fill.color = Color.parseColor("#171B20")
+        fill.color = Ui.CARD
         c.drawRoundRect(RectF(0f, 0f, w, h), 32 * d, 32 * d, fill)
         // 옅은 격자 (축척 감)
-        fill.color = Color.parseColor("#1F242B")
+        fill.color = Ui.RAISED
         var x = 0f; while (x < w) { c.drawRect(x, 0f, x + 2 * d, h, fill); x += 120 * d }
         var y = 0f; while (y < h) { c.drawRect(0f, y, w, y + 2 * d, fill); y += 120 * d }
         if (options.isEmpty()) return
@@ -48,7 +48,7 @@ class MiniMapView(context: Context) : View(context) {
 
         // 목적지
         fill.color = BG; c.drawCircle(w / 2, h / 2, 22 * d, fill)
-        fill.color = Ui.TEXT; c.drawCircle(w / 2, h / 2, 14 * d, fill)
+        fill.color = Ui.AMBER; c.drawCircle(w / 2, h / 2, 14 * d, fill)
         text.color = Ui.TEXT; text.textSize = 22 * d
         c.drawText("목적지", w / 2, h / 2 - 34 * d, text)
 
@@ -58,8 +58,8 @@ class MiniMapView(context: Context) : View(context) {
             val (mx, my) = pts[i]!!
             val r = (if (i == selected) 32 else 26) * d
             fill.color = BG; c.drawCircle(sx(mx), sy(my), r + 4 * d, fill)
-            fill.color = if (i == selected) Ui.GREEN else Ui.PIN; c.drawCircle(sx(mx), sy(my), r, fill)
-            text.color = if (i == selected) BG else Ui.TEXT; text.textSize = (if (i == selected) 30 else 26) * d
+            fill.color = if (i == selected) Ui.ACCENT else Ui.PIN; c.drawCircle(sx(mx), sy(my), r, fill)
+            text.color = if (i == selected) Color.WHITE else Ui.TEXT; text.textSize = (if (i == selected) 30 else 26) * d
             c.drawText("${i + 1}", sx(mx), sy(my) + text.textSize / 3, text)
         }
         text.color = Ui.FAINT; text.textSize = 20 * d; text.textAlign = Paint.Align.LEFT; text.isFakeBoldText = false
@@ -67,5 +67,5 @@ class MiniMapView(context: Context) : View(context) {
         text.textAlign = Paint.Align.CENTER; text.isFakeBoldText = true
     }
 
-    private companion object { val BG = Color.parseColor("#0E1013") }
+    private val BG get() = Ui.CARD
 }

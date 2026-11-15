@@ -114,7 +114,7 @@ class ParkingTracker(
         val s = ParkingSession(
             startedAt = clock(), lotId = o.lotId, lotName = o.name, lat = o.lat, lng = o.lng, rule = o.rule,
             freeMin = o.freeMin, storeName = c.storeName.takeIf { o.freeMin > 0 }, reason = o.reason, destName = c.destName,
-            walkMeters = o.walkMeters,
+            walkMeters = o.walkMeters, redeemHint = o.how?.redeem.takeIf { o.freeMin > 0 },
         )
         update(state.copy(session = s, reminder = null))
         return s
