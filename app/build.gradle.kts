@@ -1,7 +1,13 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
 }
+
+// release 서명 키는 저장소 밖에 둔다. 경로는 PARKDEAL_SIGNING 또는 ~/.parkdeal-keys/signing.properties
+val signingFile = file(System.getenv("PARKDEAL_SIGNING") ?: "${System.getProperty("user.home")}/.parkdeal-keys/signing.properties")
+val signing = Properties().apply { if (signingFile.exists()) signingFile.inputStream().use { load(it) } }
 
 android {
     namespace = "com.parkdeal.app"
@@ -19,6 +25,22 @@ android {
     }
 
     buildFeatures { buildConfig = true }
+
+    signingConfigs {
+        if (signing.isNotEmpty()) create("release") {
+            storeFile = file(signing.getProperty("storeFile"))
+            storePassword = signing.getProperty("storePassword")
+            keyAlias = signing.getProperty("keyAlias")
+            keyPassword = signing.getProperty("keyPassword")
+        }
+    }
+
+    buildTypes {
+        release {
+            // 키가 없는 곳(CI)에서는 서명 없이 빌드만 확인한다
+            signingConfig = signingConfigs.findByName("release")
+        }
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
