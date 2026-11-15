@@ -22,7 +22,6 @@ import com.parkdeal.core.voice.VoiceCommand
 import com.parkdeal.app.parking.Parking
 import com.parkdeal.app.parking.ParkingService
 import com.parkdeal.app.parking.Voice
-import com.parkdeal.app.ui.MiniMapView
 import com.parkdeal.app.ui.Ui
 import com.parkdeal.app.ui.Ui.MATCH
 import com.parkdeal.app.ui.Ui.WRAP
@@ -337,10 +336,7 @@ class MainActivity : Activity() {
         val opts = r.options.take(5)
         addView(Ui.hbox(this@MainActivity, 32).apply {
             gravity = Gravity.TOP
-            // 지도는 앱만 크게 볼 때만. 반쪽 창에서는 바로 옆 내비 지도에 경유지로 보인다
-            if (!narrow) addView(MiniMapView(this@MainActivity).apply {
-                destLat = shownPlace?.lat ?: 0.0; destLng = shownPlace?.lng ?: 0.0; options = opts; selected = index
-            }, lp(dp(640), MATCH))
+            // 앱 안에 지도를 그리지 않는다. 위치는 바로 옆 Pleos 내비 지도가 보여준다: 카드를 누르면 경유지로 들어간다 (PRD 보기 ①)
             addView(Ui.vbox(this@MainActivity, 14).apply {
                 opts.forEachIndexed { i, o -> addView(optionRow(i, o, i == index), lp(MATCH, WRAP)) }
                 addView(Ui.grow(this@MainActivity))
@@ -382,9 +378,10 @@ class MainActivity : Activity() {
                 addView(Ui.text(this@MainActivity, (listOf(o.reason) + limits).joinToString(" · "), 22, Ui.ACCENT_TEXT, 700).apply { maxLines = 1 })
             }
             addView(Ui.hbox(this@MainActivity, 8).apply {
-                addView(Ui.text(this@MainActivity, "도보 ${o.walkMinutes}분", 21, Ui.MUTED))
+                // 직선거리 × 1.2 로 어림한 값이라 "약" 을 붙인다 (보행 경로 API 연동 전)
+                addView(Ui.text(this@MainActivity, "걸어서 약 ${o.walkMinutes}분", 21, Ui.MUTED))
                 if (o.how?.needsReview == true) addView(tag("혜택 확인 필요", warn = true))
-                o.notes.take(if (selected) 4 else 3).forEachIndexed { k, n -> addView(tag(n, warn = o.blocked && k == 0)) }
+                o.notes.take(if (compact()) 3 else 6).forEachIndexed { k, n -> addView(tag(n, warn = o.blocked && k == 0)) }
             })
         }, lp(0, WRAP, 1f))
         addView(Ui.text(this@MainActivity, if (o.blocked) "진입 불가" else Ui.won(o.fee), if (selected) 44 else 34,
@@ -411,7 +408,7 @@ class MainActivity : Activity() {
             }
             if (s.reason.isNotEmpty()) addView(pill(s.reason, 28, Ui.GREEN, Ui.GREEN_BG), lp(WRAP, WRAP))
             if (justParked && s.hasBenefit) s.redeemHint?.let { addView(Ui.text(this@MainActivity, "등록 방법: $it", 30, Ui.ACCENT_TEXT, 700)) }
-            if (justParked) addView(Ui.text(this@MainActivity, "${s.destName}까지 걸어서 ${s.walkMinutes}분", 30, Ui.TEXT2, 700))
+            if (justParked) addView(Ui.text(this@MainActivity, "${s.destName}까지 걸어서 약 ${s.walkMinutes}분", 30, Ui.TEXT2, 700))
             addView(Ui.hbox(this@MainActivity, 20).apply {
                 addView(stat("주차한 시간", durationText(s.elapsedMin(now)), Ui.TEXT), lp(0, WRAP, 1f))
                 addView(stat("남은 무료 시간",
@@ -564,7 +561,7 @@ class MainActivity : Activity() {
                 addView(Ui.text(this@MainActivity, Ui.won(top.fee), 96, if (top.fee == 0) Ui.GREEN else Ui.TEXT, 900))
             })
             if (top.reason.isNotEmpty()) addView(pill(top.reason, 28, Ui.GREEN, Ui.GREEN_BG), lp(WRAP, WRAP))
-            addView(Ui.text(this@MainActivity, "${durationText(stayMin)} 머물면 · 목적지까지 걸어서 ${top.walkMinutes}분", 28, Ui.TEXT2))
+            addView(Ui.text(this@MainActivity, "${durationText(stayMin)} 머물면 · 목적지까지 걸어서 약 ${top.walkMinutes}분", 28, Ui.TEXT2))
             if (guided < 0) addView(Ui.button(this@MainActivity, "여기로 경유", true, 104, 36) { guide(top); render() }, lp(MATCH, dp(104)))
         }, lp(MATCH, WRAP))
         addView(Ui.text(this@MainActivity, "다른 후보", 24, Ui.MUTED))
