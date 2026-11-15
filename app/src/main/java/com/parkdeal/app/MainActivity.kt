@@ -9,7 +9,12 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.Gravity
+import android.animation.ValueAnimator
 import android.view.View
+import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
+import android.widget.HorizontalScrollView
+import android.widget.TextView
 import android.widget.FrameLayout
 import com.parkdeal.app.data.AssetSnapshot
 import com.parkdeal.app.data.FileResponseCache
@@ -120,7 +125,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        content = FrameLayout(this).apply { setBackgroundColor(Ui.BG) }
+        content = FrameLayout(this).apply { setBackgroundColor(Ui.GROUND) }
         setContentView(content)
         // 알림(출차 안내)과 차 위치(다른 곳에 세웠는지 확인)는 실행 중 허락이 필요한 권한이다
         val need = listOf(Manifest.permission.POST_NOTIFICATIONS, FUSED_LOCATION)
@@ -270,6 +275,7 @@ class MainActivity : Activity() {
                 stayMin = d.value.store?.stayMin ?: 60
                 index = 0
                 shownPlace = p
+                animList = true // 새 추천: 보드가 차례로 올라온다 (정차 중일 때만)
                 recompute()
                 val r = recommendation
                 if (briefPending && r != null) { briefPending = false; voice.speak(Briefing.sentence(r, stayMin)) }
@@ -355,45 +361,129 @@ class MainActivity : Activity() {
         if (foreground) ParkingService.ensure(this) // 뒤에 있을 때는 시작할 수 없다(Android 12+)
     }
 
+    // ---- 그리기와 움직임
+    // 움직임은 세 가지뿐이고 전부 운전자가 한 일에 답한다: 화면이 바뀔 때, 다른 곳을 골랐을 때, 금액이 바뀌었을 때.
+    // 주행 제한 중에는 하나도 쓰지 않는다 (docs/pleos-guidelines.md 1장: 주행 중 장식·반복 애니메이션 금지).
+
+    /** 지금 보이는 화면 종류. 바뀔 때만 한 번 전환한다 */
+    private var lastScreen: String? = null
+    /** 이번 그리기에서 움직여도 되는지 (주행 제한 중이면 false) */
+    private var motion = true
+    /** 다음 그리기 한 번만: 목록이 차례로 올라온다 / 고른 곳 판이 바뀐다 / 금액이 굴러간다 */
+    private var animList = false
+    private var animDetail = false
+    private var animFee = false
+    private val shownFee = mutableMapOf<String, Int>()
+
     private fun render() {
         if (!::content.isInitialized) return
         // 주간·야간 테마: 시스템(Pleos) 설정을 따른다
         Ui.theme((resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
             android.content.res.Configuration.UI_MODE_NIGHT_YES)
-        content.setBackgroundColor(Ui.BG)
+        content.setBackgroundColor(Ui.GROUND)
         syncCandidate()
         val st = tracker.state
         if (st.session != null) arrivedAt = null
         val r = recommendation
         // 주행 제한 중에는 줄인 화면만: 고른 곳 하나 + 짧은 목록, 입력·지도·긴 글 없음
         val drive = driving.restricted
-        val screen = when {
-            st.reminder != null -> reminderScreen(st.reminder!!, drive)
-            st.session != null -> parkedScreen(st.session!!)
-            r != null && r.options.isNotEmpty() -> if (drive) drivingScreen(r) else compareScreen(r)
-            place == null -> waitingScreen()
+        motion = !drive
+        val now = System.currentTimeMillis()
+        val key = when {
+            st.reminder != null -> "reminder"
+            st.session?.stop == true -> "stop"
+            st.session != null -> if (st.session!!.elapsedMin(now) < 10 && st.session!!.farFrom == null) "parked" else "parking"
+            r != null && r.options.isNotEmpty() -> if (drive) "drive" else "compare"
+            place == null -> "waiting"
+            else -> "empty"
+        }
+        val screen = when (key) {
+            "reminder" -> reminderScreen(st.reminder!!, drive)
+            "stop", "parked", "parking" -> parkedScreen(st.session!!)
+            "drive" -> drivingScreen(r!!)
+            "compare" -> compareScreen(r!!)
+            "waiting" -> waitingScreen()
             else -> emptyScreen()
         }
+        val scrolls = HashMap<String, Int>()
+        if (key == lastScreen) collectScroll(content, scrolls)
         content.removeAllViews()
         content.addView(screen, FrameLayout.LayoutParams(MATCH, MATCH))
+        if (scrolls.isNotEmpty()) restoreScroll(screen, scrolls)
+        if (motion && lastScreen != null && key != lastScreen) {
+            appear(screen, 20, 0, 260)
+        }
+        lastScreen = key
+        animList = false; animDetail = false; animFee = false
         heard?.let { h ->
-            content.addView(Ui.text(this, h, 32, Ui.TEXT, 700).apply {
+            content.addView(Ui.text(this, h, 30, Ui.ON_INK, 700).apply {
                 setPadding(dp(36), dp(22), dp(36), dp(22))
-                background = Ui.rounded(Ui.GLEO_BG, 24, this@MainActivity, Ui.GLEO, 2)
+                background = Ui.rounded(Ui.INK, 28, this@MainActivity)
                 elevation = dp(8).toFloat()
             // 버튼 줄 바로 위에 띄운다. 위쪽에 두면 머무를 시간 버튼을 가린다 (검토판 A6)
-            }, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(if (compact()) 200 else 190) })
+            }, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(190) })
         }
     }
 
-    // ---- 화면 (PRD 시안의 정보 구조를 따르되, 넓은 창은 두 열로)
+    /** 다시 그려도 목록이 맨 위로 튀지 않게 스크롤 위치를 옮겨 준다 */
+    private fun collectScroll(v: View, out: MutableMap<String, Int>) {
+        (v.tag as? String)?.takeIf { it.startsWith(Kit.SCROLL) }?.let { out[it] = if (v is HorizontalScrollView) v.scrollX else v.scrollY }
+        if (v is ViewGroup) for (i in 0 until v.childCount) collectScroll(v.getChildAt(i), out)
+    }
+
+    private fun restoreScroll(root: View, saved: Map<String, Int>) {
+        root.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                root.viewTreeObserver.removeOnPreDrawListener(this)
+                fun walk(v: View) {
+                    (v.tag as? String)?.let { saved[it] }?.let { if (v is HorizontalScrollView) v.scrollTo(it, 0) else v.scrollTo(0, it) }
+                    if (v is ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
+                }
+                walk(root)
+                return true
+            }
+        })
+    }
+
+    /** 아래에서 살짝 올라오며 나타난다. [order] 만큼 늦게 출발해 목록이 차례로 선다 */
+    private fun rise(v: View, order: Int) {
+        if (!motion) return
+        appear(v, 18, 35L * order, 280)
+    }
+
+    /**
+     * 살짝 올라오며 나타난다. 애니메이션이 어떤 이유로든 돌지 않아도(창이 가려짐·시스템 설정)
+     * 화면이 빈 채로 남지 않게, 끝날 시각에 한 번 더 제자리로 돌려 놓는다.
+     */
+    private fun appear(v: View, fromDp: Int, delay: Long, duration: Long) {
+        v.alpha = 0f; v.translationY = dp(fromDp).toFloat()
+        v.animate().alpha(1f).translationY(0f).setStartDelay(delay).setDuration(duration).setInterpolator(DecelerateInterpolator(1.6f)).start()
+        main.postDelayed({ v.animate().cancel(); v.alpha = 1f; v.translationY = 0f }, delay + duration + 80)
+    }
+
+    /** 머물 시간·혜택 가게를 바꿔 금액이 달라지면 이전 금액에서 굴러간다 */
+    private fun rollFee(key: String, tv: TextView, value: Int?) {
+        val prev = shownFee[key]
+        if (value == null) { shownFee.remove(key); return }
+        shownFee[key] = value
+        if (!motion || !animFee || prev == null || prev == value) return
+        ValueAnimator.ofInt(prev, value).apply {
+            duration = 420; interpolator = DecelerateInterpolator(2f)
+            addUpdateListener { tv.text = Ui.won(it.animatedValue as Int) }
+            start()
+        }
+    }
+
+    // ---- 화면: PRD 시안의 데이터는 그대로, 배치는 "가격표 보드"로 (ui/Ui.kt 머리말)
 
     private val kit by lazy { Kit(this) }
 
-    /** 상태 줄 오른쪽 끝의 작은 "말로 묻기" (시안에는 없지만 손을 덜 쓰게 남긴다) */
-    private fun micPill(): View = Ui.text(this, "말로 묻기", 24, Ui.ACCENT_TEXT, 700).apply {
-        setPadding(dp(20), dp(10), dp(20), dp(10)); background = Ui.rounded(Ui.ACCENT_BG, 999, this@MainActivity)
-        setOnClickListener { ask() }
+    /** 맨 윗줄 오른쪽 끝의 "말로 묻기" */
+    private fun micPill(): View = Ui.text(this, "말로 묻기", 24, Ui.INK, 700).apply {
+        gravity = Gravity.CENTER
+        setPadding(dp(28), 0, dp(28), 0); minimumHeight = dp(68); minHeight = dp(68)
+        background = Ui.rounded(android.graphics.Color.TRANSPARENT, 999, this@MainActivity, Ui.INK3, 2)
+        Ui.tap(this, 34) { ask() }
     }
 
     private fun clock(ms: Long): String {
@@ -410,192 +500,294 @@ class MainActivity : Activity() {
     /** 목적지 가게 혜택인가 (시안의 "혜택 적용") */
     private fun isOwn(o: ParkingOption, d: OtherDeal?) = d != null && d.storeName == recommendation?.storeName && o.reason.isNotEmpty()
 
-    /** 카드 위 큰 금액: 목적지 혜택이면 혜택 적용 금액, 아니면 일반 주차 요금 */
+    /** 보드의 큰 금액: 목적지 혜택이면 혜택 적용 금액, 아니면 일반 주차 요금 */
     private fun headFee(o: ParkingOption): Pair<String, String> {
         val d = chosenDeal(o)
         return when {
-            o.blocked -> "들어갈 수 없어요" to (o.notes.firstOrNull() ?: "진입 불가")
+            o.blocked -> (o.notes.firstOrNull() ?: "진입 불가") to "불가"
             isOwn(o, d) -> "혜택 적용" to Ui.won(d!!.fee)
             else -> "일반 주차 시" to (o.normalFee?.let { Ui.won(it) } ?: "요금 정보 없음")
         }
     }
 
-    /** 주차 비교 (PRD S2) · 정차를 고르면 정차 구간 (PRD S10) */
-    private fun compareScreen(r: Recommendation): View = kit.pad(Ui.vbox(this, 0)).apply {
+    private fun cond(d: OtherDeal) = d.reason.removePrefix(d.storeName).trim()
+
+    /** 주차 비교 (PRD S2) · 정차를 고르면 정차 구간 (PRD S10) · 즐겨찾기 근처 (S11) */
+    private fun compareScreen(r: Recommendation): View = kit.pad(Ui.vbox(this, 0), compact()).apply {
+        val root: LinearLayout = this
         val narrow = compact()
         val routine = routineName
-        addView(Ui.hbox(this@MainActivity, 16).apply {
-            gravity = Gravity.TOP
-            addView(Ui.vbox(this@MainActivity, 6).apply {
-                val loading = place != null && place != shownPlace
-                addView(kit.title(if (routine != null) "$routine 주변 주차장" else shownName()).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
-                addView(kit.small(when {
-                    loading -> "${place?.name} 주변을 찾는 중…"
-                    routine != null -> "즐겨찾기 '$routine' 근처라 자동으로 띄우지 않았어요"
-                    stayMin == STOP_MIN -> "주변 정차 · 5분 이내 · 구청이 정한 허용 구간이에요"
-                    else -> "주변 주차 · ${durationText(stayMin)} 머물면 · 누르면 내비에서 경로를 보여줘요"
-                }, color = if (loading) Ui.ACCENT_TEXT else Ui.TEXT2))
-            }, lp(0, WRAP, 1f))
-            addView(micPill())
-        }, lp(MATCH, WRAP))
-        addView(kit.stay(stayChoices().map { (if (it == STOP_MIN) "정차" else if (it >= 1440) "종일" else durationText(it)) to (it == stayMin) }) { i ->
-            stayMin = stayChoices()[i]; if (stayMin == STOP_MIN) loadStops() else recompute()
-        }, lp(MATCH, WRAP).apply { topMargin = dp(21) })
+        val loading = place != null && place != shownPlace
+        addView(kit.topBar(remainText(), micPill()), lp(MATCH, WRAP))
+        addView(kit.title(if (routine != null) "$routine 주변 주차장" else shownName(), fit(60)).apply {
+            maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+        }, lp(MATCH, WRAP).apply { topMargin = dp(10) })
+        addView(kit.body(when {
+            loading -> "${place?.name} 주변을 찾는 중…"
+            routine != null -> "즐겨찾기 '$routine' 근처라 자동으로 띄우지 않았어요"
+            stayMin == STOP_MIN -> "주변 정차 · 5분 이내 · 구청이 정한 허용 구간이에요"
+            else -> "주변 주차 · ${durationText(stayMin)} 머물면 · 누르면 내비에서 경로를 보여줘요"
+        }, Ui.BODY, if (loading) Ui.INK else Ui.INK2, if (loading) 700 else 400).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END },
+            lp(MATCH, WRAP).apply { topMargin = dp(8) })
+        addView(kit.segmented(stayChoices().map { (if (it == STOP_MIN) "정차" else if (it >= 1440) "종일" else durationText(it)) to (it == stayMin) }) { i ->
+            stayMin = stayChoices()[i]; animFee = true; if (stayMin == STOP_MIN) loadStops() else recompute()
+        }, lp(MATCH, WRAP).apply { topMargin = dp(24) })
         val body: View = if (stayMin == STOP_MIN) stopView(r, narrow) else lotList(r, narrow)
-        addView(body, lp(MATCH, 0, 1f).apply { topMargin = dp(21) })
+        addView(body, lp(MATCH, 0, 1f).apply { topMargin = dp(20) })
         addView(Ui.hbox(this@MainActivity, 16).apply {
             val now = java.time.ZonedDateTime.now(SEOUL)
             val saved = MonthSummary.of(tracker.state.history, now.year, now.monthValue, SEOUL).saved
-            if (saved > 0) addView(Ui.text(this@MainActivity, "${now.monthValue}월 혜택으로 ${Ui.won(saved)} 아꼈어요", 21, Ui.ACCENT_TEXT, 700))
-            addView(Ui.grow(this@MainActivity))
+            if (saved > 0) {
+                addView(Ui.text(this@MainActivity, "${now.monthValue}월 혜택으로", Ui.CAP, Ui.INK2, 600))
+                addView(kit.price(Ui.won(saved), Ui.CAP, true))
+                addView(Ui.text(this@MainActivity, "아꼈어요", Ui.CAP, Ui.INK2, 600))
+            }
             val seoul = r.options.any { it.lotId < 0 }
-            addView(Ui.text(this@MainActivity, "정보 출처: 네이버 지도" + (if (seoul) " · 서울 열린데이터광장" else "") + " · ${originText(origin)}", 20, Ui.FAINT))
+            // 좁은 창에서는 출처가 잘리므로 "아꼈어요"가 없을 때만 같은 줄에 두고, 있으면 바로 윗줄로 올린다
+            val source = "정보 출처: 네이버 지도" + (if (seoul) " · 서울 열린데이터광장" else "") + " · ${originText(origin)}"
+            if (narrow && saved > 0) {
+                root.addView(Ui.text(this@MainActivity, source, 20, Ui.INK3).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END },
+                    lp(MATCH, WRAP).apply { topMargin = dp(12) })
+                addView(Ui.grow(this@MainActivity))
+            } else addView(Ui.text(this@MainActivity, source, 20, Ui.INK3).apply {
+                gravity = Gravity.END; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.START
+            }, lp(0, WRAP, 1f))
             // 기어를 읽을 수 없는 차를 위한 수동 시작
-            addView(Ui.text(this@MainActivity, "직접 주차 시작", 20, Ui.FAINT, 700).apply { setOnClickListener { tracker.startNow() } })
-        }, lp(MATCH, WRAP).apply { topMargin = dp(14) })
+            addView(Ui.text(this@MainActivity, "직접 주차 시작", Ui.CAP, Ui.INK, 700).apply {
+                gravity = Gravity.CENTER; setPadding(dp(24), 0, dp(24), 0); minimumHeight = dp(60); minHeight = dp(60)
+                background = Ui.rounded(Ui.SUNKEN, 18, this@MainActivity)
+                Ui.tap(this, 18) { tracker.startNow() }
+            })
+        }, lp(MATCH, WRAP).apply { topMargin = dp(10) })
     }
 
     /**
-     * 후보 목록. 좁은 창은 시안대로 카드 한 열(고른 카드만 펼침),
-     * 넓은 창은 왼쪽에 한 줄짜리 목록(비교) · 오른쪽에 고른 곳 카드와 안내 버튼(결정).
+     * 후보 보드. 좁은 창은 한 열(고른 줄만 아래로 펼침),
+     * 넓은 창은 왼쪽에 보드(비교) · 오른쪽에 고른 곳 판과 안내 버튼(결정).
      */
     private fun lotList(r: Recommendation, narrow: Boolean): View {
         val opts = r.options.take(8)
-        if (narrow) return kit.scroll(Ui.vbox(this, 15).apply { opts.forEachIndexed { i, o -> addView(lotCard(i, o, i == index), lp(MATCH, WRAP)) } })
-        val list = kit.scroll(kit.col(12, *opts.mapIndexed { i, o -> lotRow(i, o, i == index) { index = i; guide(o, speak = false); render() } }.toTypedArray()))
-        val sel = r.options.getOrNull(index) ?: opts.first()
-        val guided = follower.guiding == sel.name
-        val detail = kit.col(18,
-            kit.scroll(lotCard(index, sel, true)).also { it.tag = null },
-            kit.big(if (guided) "${sel.name} 안내 중" else "여기로 안내", !guided) { guide(sel); render() },
-        )
-        (detail.getChildAt(0).layoutParams as LinearLayout.LayoutParams).apply { height = 0; weight = 1f }
-        return Ui.hbox(this, 36).apply {
-            gravity = Gravity.TOP
-            addView(list, lp(0, MATCH, 1f))
-            addView(detail, lp(0, MATCH, 1.05f))
-        }
-    }
-
-    /** 후보 카드 (PRD lotCard). 고른 카드만 걷는 길과 다른 혜택 가게 고르기를 펼친다 */
-    private fun lotCard(i: Int, o: ParkingOption, on: Boolean): View = Ui.vbox(this, 15).apply {
-        setPadding(dp(33), dp(24), dp(33), dp(24))
-        background = Ui.rounded(Ui.CARD, 30, this@MainActivity, if (on) Ui.ACCENT else null)
-        if (o.blocked) alpha = 0.55f
-        val (feeLabel, fee) = headFee(o)
-        addView(Ui.hbox(this@MainActivity, 21).apply {
-            addView(kit.num(i + 1, on))
-            addView(Ui.vbox(this@MainActivity, 6).apply {
-                addView(Ui.hbox(this@MainActivity, 12).apply {
-                    addView(Ui.text(this@MainActivity, o.name, 33, Ui.TEXT, 700).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }, lp(WRAP, WRAP, 1f).apply { width = 0; weight = 1f })
-                    addView(kit.walkBadge(walkShort(o)))
-                })
-                o.rule?.let { addView(Ui.text(this@MainActivity, FeeText.rule(it), 22, Ui.MUTED).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }) }
-                if (on) addView(Ui.text(this@MainActivity, "목적지까지 ${walkText(o)}", 22, Ui.ACCENT_TEXT, 700))
-                val tags = o.notes.filter { it != o.notes.firstOrNull() || !o.blocked } + listOfNotNull("혜택 확인 필요".takeIf { o.how?.needsReview == true })
-                if (tags.isNotEmpty()) addView(Ui.hbox(this@MainActivity, 8).apply { tags.take(4).forEach { addView(badge(it, 18)) } })
-            }, lp(0, WRAP, 1f))
-            addView(Ui.vbox(this@MainActivity).apply {
-                gravity = Gravity.END
-                addView(Ui.text(this@MainActivity, feeLabel, 20, Ui.MUTED))
-                addView(Ui.text(this@MainActivity, fee, if (fee.endsWith("원")) 39 else 27, if (fee == "0원") Ui.ACCENT_TEXT else if (o.blocked) Ui.AMBER else Ui.TEXT, 900))
-            })
-        })
-        val d = chosenDeal(o)
-        if (d != null) {
-            val cond = d.reason.removePrefix(d.storeName).trim()
-            if (on && o.deals.size > 1) {
-                addView(Ui.text(this@MainActivity, "다른 혜택 가게로 바꾸기 ▴", 22, Ui.ACCENT_TEXT, 700).apply { setPadding(dp(6), 0, 0, 0) })
-                o.deals.take(4).forEach { x ->
-                    addView(kit.deal(x.storeName, x.reason.removePrefix(x.storeName).trim(), Ui.won(x.fee), x.storeName == d.storeName) {
-                        pickedDeal[o.lotId] = x.storeName; render()
-                    }, lp(MATCH, WRAP))
+        val rows = Ui.vbox(this).apply {
+            opts.forEachIndexed { i, o ->
+                val on = i == index
+                // 줄을 누르면 바로 경유지로: 옆의 내비 지도에 그 주차장 경로가 그려진다
+                val row = boardRow(i, o, on, lite = false, below = if (narrow && on) lotExpand(o) else null) {
+                    index = i; animDetail = true; guide(o, speak = false); render()
                 }
-            } else {
-                addView(kit.deal(d.storeName, cond, Ui.won(d.fee), null), lp(MATCH, WRAP))
-                if (o.deals.size > 1) addView(Ui.text(this@MainActivity, "혜택 가게 외 ${o.deals.size - 1}곳 보기 ▾", 22, Ui.ACCENT_TEXT, 700).apply { setPadding(dp(6), 0, 0, 0) })
+                if (animList) rise(row, i)
+                addView(row, lp(MATCH, WRAP))
             }
         }
-        // 카드를 누르면 바로 경유지로: 옆의 내비 지도에 그 주차장 경로가 그려진다
-        setOnClickListener { index = i; guide(o, speak = false); render() }
+        val list = kit.scroll(rows, "lots")
+        if (narrow) return list
+        val sel = r.options.getOrNull(index) ?: opts.first()
+        val guided = follower.guiding == sel.name
+        val detail = lotSheet(sel)
+        if (animDetail || animList) rise(detail, if (animList) 2 else 0)
+        val sheet = kit.sheet(Ui.vbox(this, 24)).apply {
+            addView(kit.scroll(detail, "sheet:${sel.lotId}"), lp(MATCH, 0, 1f))
+            addView(kit.big(if (guided) "${sel.name} 안내 중" else "여기로 안내", !guided) { guide(sel); render() }, lp(MATCH, WRAP))
+        }
+        return Ui.hbox(this, 36).apply {
+            gravity = Gravity.TOP
+            addView(list, lp(0, MATCH, 1.18f))
+            addView(sheet, lp(0, MATCH, 1f))
+        }
     }
 
-    /** 주의할 것(만차 잦음·기계식·협소·차종 제한)만 경고색, 발렛·높이는 보통 배지 */
-    private fun badge(s: String, size: Int): View =
-        if (s.startsWith("발렛") || s.startsWith("무료 발렛") || s.startsWith("높이") || s.startsWith("빈자리")) kit.walkBadge(s, size) else kit.warnTag(s, size)
+    /** 주의할 것(만차 잦음·기계식·협소·차종 제한)만 주홍, 발렛·높이·빈자리는 보통 딱지 */
+    private fun noteTag(s: String, size: Int = 20): View =
+        kit.tag(s, !(s.startsWith("발렛") || s.startsWith("무료 발렛") || s.startsWith("높이") || s.startsWith("빈자리")), size)
+
+    private fun noteList(o: ParkingOption): List<String> =
+        o.notes.filter { it != o.notes.firstOrNull() || !o.blocked } + listOfNotNull("혜택 확인 필요".takeIf { o.how?.needsReview == true })
 
     private fun walkShort(o: ParkingOption) = walks[o.lotId]?.let { "도보 ${it.walkMin}분" } ?: if (o.walkMeters < NEAR_M) "바로 앞" else "도보 약 ${o.walkMinutes}분"
 
-    /** 다른 후보 줄 (주행 중·정차 화면 아래) */
-    private fun lotRow(i: Int, o: ParkingOption, on: Boolean = false, onClick: () -> Unit): View {
+    /**
+     * 보드 한 줄.
+     *  - 비교([lite] 아님, PRD lotCard): 금액 열 = 목적지 가게 혜택이면 노란 가격표, 아니면 일반 요금.
+     *    다른 가게 혜택은 아래 줄에 작은 가격표로 붙인다.
+     *  - 주행·정차 목록([lite], PRD .crow): 금액 열 = 혜택을 쓰면 낼 돈, 그 아래 일반 요금.
+     */
+    private fun boardRow(i: Int, o: ParkingOption, on: Boolean, lite: Boolean, below: View? = null, onClick: () -> Unit): View {
+        val narrow = compact()
         val d = chosenDeal(o)
-        val zero = (if (isOwn(o, d)) d?.fee else d?.fee ?: o.fee) == 0
-        val fee = when { o.blocked -> "불가"; d != null -> Ui.won(d.fee); else -> Ui.won(o.fee) }
-        val small = if (!isOwn(o, d) && d != null) o.normalFee?.let { "일반 ${Ui.won(it)}" } else if (isOwn(o, d)) "목적지 가게 혜택" else null
-        val badges = listOf(kit.walkBadge(walkShort(o), 19)) + o.notes.take(1).map { badge(it, 18) }
-        return kit.row(i + 1, o.name, badges, d?.reason ?: (o.rule?.let { FeeText.rule(it) } ?: ""), fee, zero, small, on, onClick)
+        val own = isOwn(o, d)
+        val more = (o.deals.size - 1).takeIf { it > 0 }?.let { "외 ${it}곳" }
+        val price: TextView
+        val note: String?
+        if (lite) {
+            price = when {
+                o.blocked -> kit.price("불가", 30, false, Ui.WARN)
+                d != null -> kit.price(Ui.won(d.fee), 30, true, soft = !own)
+                else -> kit.price(Ui.won(o.fee), 30, false)
+            }
+            note = if (own) "목적지 가게 혜택" else if (d != null) o.normalFee?.takeIf { it != d.fee }?.let { "일반 ${Ui.won(it)}" } else null
+        } else {
+            val (label, fee) = headFee(o)
+            val size = fit(40).coerceAtLeast(34)
+            // 일반 요금을 모르는 곳은 아는 금액(다른 가게 혜택)을 금액 열에 올린다
+            val viaOther = !o.blocked && !own && o.normalFee == null && d != null
+            price = when {
+                o.blocked -> kit.price(fee, 26, false, Ui.WARN)
+                viaOther -> kit.price(Ui.won(d!!.fee), size, true, soft = true)
+                o.normalFee == null && !own -> kit.price(fee, Ui.CAP, false, Ui.INK3)
+                else -> kit.price(fee, size, own)
+            }
+            note = when { viaOther -> "다른 가게 혜택"; o.normalFee == null && !own && !o.blocked -> null; else -> label }
+            if (!o.blocked) rollFee("row:${o.lotId}", price, if (own || viaOther) d?.fee else o.normalFee)
+        }
+        val lines = buildList {
+            // 주행·정차 목록은 열이 좁다: 주의 딱지를 이름 옆이 아니라 아래 줄 앞에 둔다 (이름이 잘리지 않게)
+            if (lite) (d?.reason ?: o.rule?.let { FeeText.rule(it) })?.let { text ->
+                val warnNote = o.notes.firstOrNull()
+                add(if (warnNote == null) kit.line(text) else Ui.hbox(this@MainActivity, 10).apply { addView(noteTag(warnNote)); addView(kit.line(text), lp(0, WRAP, 1f)) })
+            } ?: o.notes.firstOrNull()?.let { add(kit.left(noteTag(it))) }
+            else {
+                // 넓은 창은 요금 규칙이 오른쪽 판에 있다. 좁은 창은 줄에 같이 둔다
+                if (narrow || d == null) o.rule?.let { add(kit.line(FeeText.rule(it), color = Ui.INK3)) }
+                if (d != null) {
+                    val text = d.reason + (more?.let { " · $it" } ?: "")
+                    add(if (own || o.normalFee == null) kit.line(text) else kit.line(text, Ui.won(d.fee)))
+                }
+            }
+        }
+        val notes = if (lite) o.notes.take(1) else noteList(o).take(2)
+        // 좁은 창: 딱지를 이름 옆에 두면 이름이 잘린다. 이름 아래 한 줄로 내린다
+        val tagLine = if (narrow && !lite) Ui.hbox(this, 8).apply { addView(kit.tag(walkShort(o))); notes.forEach { addView(noteTag(it)) } } else null
+        val tags = if (narrow || lite) emptyList() else notes.map { noteTag(it) }
+        return kit.row(i + 1, on, follower.guiding == o.name, o.name, tags, listOfNotNull(tagLine) + lines, if (narrow && !lite) null else walkShort(o), price, note,
+            dim = o.blocked, below = below, minH = if (lite) 104 else 116, onClick = onClick)
+    }
+
+    /** 이 주차장의 혜택 가게들. 여러 곳이면 고를 수 있다 (PRD "다른 혜택 가게로 바꾸기") */
+    private fun dealBox(o: ParkingOption, always: Boolean): View? {
+        val d = chosenDeal(o) ?: return null
+        if (o.deals.size < 2 && !always) return null
+        return Ui.vbox(this, 10).apply {
+            addView(Ui.text(this@MainActivity, if (o.deals.size > 1) "다른 혜택 가게로 바꾸기" else "혜택 가게", 24, Ui.INK, 700).apply { setPadding(dp(4), 0, 0, dp(4)) })
+            if (o.deals.size > 1) o.deals.take(4).forEach { x ->
+                addView(kit.deal(x.storeName, cond(x), Ui.won(x.fee), x.storeName == d.storeName, soft = !isOwn(o, x)) {
+                    pickedDeal[o.lotId] = x.storeName; animFee = true; render()
+                }, lp(MATCH, WRAP))
+            } else addView(kit.deal(d.storeName, cond(d), Ui.won(d.fee), null, soft = !isOwn(o, d)), lp(MATCH, WRAP))
+        }
+    }
+
+    /** 넓은 창 오른쪽 판: 고른 곳의 전부 (PRD lotCard 펼친 모습) */
+    private fun lotSheet(o: ParkingOption): LinearLayout = Ui.vbox(this, 20).apply {
+        val d = chosenDeal(o)
+        val own = isOwn(o, d)
+        val (feeLabel, fee) = headFee(o)
+        addView(kit.title(o.name, Ui.TITLE).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END })
+        o.rule?.let { addView(kit.body(FeeText.rule(it), 24)) }
+        addView(Ui.hbox(this@MainActivity, 8).apply {
+            addView(kit.tag(walkShort(o), false, 22))
+            noteList(o).take(3).forEach { addView(noteTag(it, 22)) }
+        })
+        addView(Ui.hbox(this@MainActivity, 24).apply {
+            gravity = Gravity.BOTTOM
+            setPadding(0, dp(6), 0, dp(6))
+            addView(Ui.vbox(this@MainActivity, 10).apply {
+                // 일반 요금을 모르는 곳은 아는 금액(다른 가게 혜택)을 올린다 (보드 줄과 같은 규칙)
+                val viaOther = !o.blocked && !own && o.normalFee == null && d != null
+                addView(Ui.text(this@MainActivity, if (viaOther) "${d!!.storeName} 혜택을 쓰면" else feeLabel, 24, Ui.INK3, 600).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
+                val big = when {
+                    viaOther -> kit.price(Ui.won(d!!.fee), 84, true, soft = true)
+                    else -> kit.price(fee, if (fee.endsWith("원")) 84 else 40, own && !o.blocked, if (o.blocked) Ui.WARN else if (fee.endsWith("원")) Ui.INK else Ui.INK3)
+                }
+                if (!o.blocked) rollFee("sheet", big, if (own || viaOther) d?.fee else o.normalFee)
+                addView(big, lp(WRAP, WRAP))
+            }, lp(0, WRAP, 1f))
+            addView(Ui.vbox(this@MainActivity, 6).apply {
+                gravity = Gravity.END
+                addView(Ui.text(this@MainActivity, "목적지까지", 24, Ui.INK3, 600), lp(WRAP, WRAP))
+                addView(Ui.text(this@MainActivity, walkText(o).removePrefix("목적지 "), 28, Ui.INK, 800), lp(WRAP, WRAP))
+            })
+        })
+        addView(kit.hairline())
+        dealBox(o, always = true)?.let { addView(it) }
+    }
+
+    /** 좁은 창에서 고른 줄 아래: 걷는 길과 다른 혜택 가게 고르기 */
+    private fun lotExpand(o: ParkingOption): View = Ui.vbox(this, 14).apply {
+        setPadding(dp(70), 0, 0, 0)
+        addView(kit.wide("목적지까지", walkText(o).removePrefix("목적지 ")))
+        dealBox(o, always = false)?.let { addView(it) }
     }
 
     /** 정차 (PRD S10). 데이터가 있는 구만 구간을 보여주고, 없으면 그렇게 말한다 */
     private fun stopView(r: Recommendation, narrow: Boolean): View {
         val st = stops
-        val lotsCol = kit.col(12, kit.listHead("5분 넘게 머물면", "누르면 바로 경유지 변경"),
-            *r.options.take(5).mapIndexed { i, o -> lotRow(i, o) { index = i; stayMin = shownDefaultStay(); guide(o, speak = false); recompute() } }.toTypedArray())
+        val lotsCol = kit.col(4, kit.listHead("5분 넘게 머물면", "누르면 바로 경유지 변경"),
+            *r.options.take(5).mapIndexed { i, o -> boardRow(i, o, false, lite = true) { index = i; stayMin = shownDefaultStay(); guide(o, speak = false); recompute() } }.toTypedArray())
         val left: View = when {
             st == null -> kit.col(12, kit.label("정차 구간을 찾는 중…"))
             !st.covered -> kit.col(18,
-                kit.label("이 지역은 정차 구간 정보가 없어요", Ui.TEXT2),
-                kit.title("5분이라도\n주차장을 이용해 주세요", 44),
-                kit.small(if (st.coveredGus.isEmpty()) "정차 정보를 받지 못했어요." else "지금은 ${st.coveredGus.joinToString(" · ")}만 알려 드려요."))
-            st.segments.isEmpty() -> kit.col(18, kit.label("근처에 정차 허용 구간이 없어요", Ui.TEXT2), kit.small("${st.gu} ${st.road ?: ""} 주변"))
+                kit.label("이 지역은 정차 구간 정보가 없어요"),
+                kit.title("5분이라도\n주차장을 이용해 주세요", Ui.TITLE),
+                kit.body(if (st.coveredGus.isEmpty()) "정차 정보를 받지 못했어요." else "지금은 ${st.coveredGus.joinToString(" · ")}만 알려 드려요."))
+            st.segments.isEmpty() -> kit.col(18, kit.label("근처에 정차 허용 구간이 없어요"), kit.body("${st.gu} ${st.road ?: ""} 주변"))
             else -> {
                 val top = st.segments.first()
                 kit.col(18,
-                    kit.label(if (top.allowedNow) "잠깐이면 여기 세워도 돼요" else "지금은 정차 허용 시간이 아니에요", if (top.allowedNow) Ui.ACCENT_TEXT else Ui.AMBER),
-                    kit.title(top.desc, 44),
-                    kit.small(listOfNotNull(top.road, if (top.sameRoad) "같은 도로" else null, top.today?.let { "오늘 $it" } ?: "오늘 허용 없음", top.lengthM?.let { "${it}m" }).joinToString(" · ")),
-                    if (st.segments.size > 1) kit.kv(st.segments.drop(1).take(3).map { Triple(it.desc, if (it.sameRoad) "같은 도로" else it.road, false) }) else null,
-                    kit.stale("소화전 · 교차로 모퉁이 · 버스정류소 · 횡단보도 앞은 5분 안이라도 안 돼요"))
+                    kit.label(if (top.allowedNow) "잠깐이면 여기 세워도 돼요" else "지금은 정차 허용 시간이 아니에요", if (top.allowedNow) Ui.INK2 else Ui.WARN),
+                    kit.title(top.desc, 40),
+                    kit.body(listOfNotNull(top.road, if (top.sameRoad) "같은 도로" else null, top.today?.let { "오늘 $it" } ?: "오늘 허용 없음", top.lengthM?.let { "${it}m" }).joinToString(" · ")),
+                    if (st.segments.size > 1) kit.table(st.segments.drop(1).take(3).map { (if (it.sameRoad) "같은 도로" else it.road) to it.desc }) else null,
+                    kit.warn("소화전 · 교차로 모퉁이 · 버스정류소 · 횡단보도 앞은 5분 안이라도 안 돼요"))
             }
         }
         return kit.scroll(if (narrow) kit.col(30, left, lotsCol) else Ui.hbox(this, 48).apply {
             gravity = Gravity.TOP
-            addView(left, lp(0, WRAP, 1.1f)); addView(lotsCol, lp(0, WRAP, 1f))
-        })
+            addView(kit.sheet(left as LinearLayout), lp(0, WRAP, 1f)); addView(lotsCol, lp(0, WRAP, 1.1f))
+        }, "stops")
     }
 
     private fun shownDefaultStay() = dest?.store?.stayMin ?: 60
 
-    /** 주행 중 (PRD S3·S4·S5) · 경유지 곧 도착 (S6). 화면을 줄이고, 고른 곳 하나와 다른 후보만 */
-    private fun drivingScreen(r: Recommendation): View = kit.pad(Ui.vbox(this, 0)).apply {
+    /**
+     * 주행 중 (PRD S3·S4·S5) · 경유지 곧 도착 (S6). 고른 곳 하나와 낼 돈을 가장 크게, 옆에 다른 후보 6줄.
+     * 새 목적지를 찾는 동안에는 이전 안내를 흐리게 두고 한 줄만 띄운다 (PRD G7: 전체 화면 전환 없음).
+     */
+    private fun drivingScreen(r: Recommendation): View = kit.pad(Ui.vbox(this, 0), compact()).apply {
+        val narrow = compact()
         val opts = r.options
         val guided = opts.indexOfFirst { it.name == follower.guiding }
         val topIndex = if (guided >= 0) guided else index
         val top = opts[topIndex]
         val arrived = arrivedAt != null && arrivedAt == top.name
+        val loading = place != null && place != shownPlace
         val d = chosenDeal(top)
         val pay = if (d != null && !isOwn(top, d)) d.fee else top.fee
+        val dimmed = mutableListOf<View>()
+        fun <T : View> T.dimmable(): T = also { dimmed += it }
+        val hero = kit.left(kit.price(Ui.won(pay), if (narrow) 104 else 148, pay != null && (d != null || top.freeMin > 0), soft = d != null && !isOwn(top, d))).dimmable()
+        val line = if (arrived) kit.body("세우고 ${walkText(top)}", 30, Ui.INK, 600)
+            else kit.body(listOfNotNull("${durationText(stayMin)} 머물면", walkText(top), top.normalFee?.let { "일반 주차 시 ${Ui.won(it)}" }).joinToString(" · "))
         val left = kit.col(18,
-            kit.status(if (arrived) "경유지 근처" else remainText(), micPill()),
-            kit.label(when { arrived -> "곧 도착해요"; guided >= 0 -> "안내 중"; else -> "주차는 여기로" }),
-            if (arrived) kit.title(top.name, 57) else Ui.hbox(this@MainActivity, 24).apply {
-                gravity = Gravity.BOTTOM
-                addView(kit.title(top.name, 51).apply { maxLines = 2 }, lp(0, WRAP, 1f))
-                addView(Ui.text(this@MainActivity, Ui.won(pay), 108, if (pay == 0) Ui.ACCENT_TEXT else Ui.TEXT, 900))
-            },
-            (d?.reason ?: top.reason).takeIf { it.isNotEmpty() }?.let { kit.chip(it) }?.also { it.layoutParams = lp(WRAP, WRAP) },
-            if (arrived) Ui.hbox(this@MainActivity, 24).apply {
-                gravity = Gravity.BOTTOM
-                addView(Ui.text(this@MainActivity, Ui.won(pay), 108, if (pay == 0) Ui.ACCENT_TEXT else Ui.TEXT, 900))
-                addView(kit.small("세우고 ${walkText(top)}", 30))
-            } else kit.small(listOfNotNull("${durationText(stayMin)} 머물면", walkText(top), top.normalFee?.let { "일반 주차 시 ${Ui.won(it)}" }).joinToString(" · ")),
-            if (guided < 0 && !arrived) kit.big("여기로 안내") { guide(top); render() } else null,
+            if (loading) kit.notice("${place?.name} 기준으로 다시 찾는 중") else null,
+            kit.label(when { arrived -> "곧 도착해요"; guided >= 0 -> "안내 중"; else -> "주차는 여기로" }).dimmable(),
+            kit.title(top.name, fit(60)).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }.dimmable(),
+            (d?.reason ?: top.reason).takeIf { it.isNotEmpty() }?.let { kit.left(kit.chip(it)) }?.dimmable(),
+            kit.spring().takeIf { !narrow },
+            hero,
+            line.dimmable(),
+            kit.spring().takeIf { !narrow },
+            // 새 응답이 올 때까지 안내 버튼은 막는다 (엉뚱한 곳 안내 방지)
+            if (guided < 0 && !arrived) kit.big("여기로 안내", enabled = !loading) { guide(top); render() } else null,
         )
+        if (loading) dimmed.forEach { it.alpha = 0.35f }
         val others = opts.withIndex().filter { it.index != topIndex }.take(6)
-        val list = kit.col(12, kit.listHead(if (arrived) "자리가 없으면 · 근처 다른 곳 · ${others.size}곳" else "다른 후보 · ${others.size}곳",
+        val list = kit.col(4, kit.listHead(if (arrived) "자리가 없으면 · 근처 다른 곳 · ${others.size}곳" else "다른 후보 · ${others.size}곳",
             if (arrived) "누르면 바로 경유지 변경" else "밀어서 더 보기"),
-            kit.scroll(kit.col(12, *others.map { (i, o) -> lotRow(i, o) { index = i; guide(o); render() } }.toTypedArray())))
-        addView(kit.twoCol(compact(), left, list), lp(MATCH, MATCH))
+            kit.scroll(Ui.vbox(this@MainActivity).apply {
+                others.forEach { (i, o) -> addView(boardRow(i, o, false, lite = true) { index = i; guide(o); render() }, lp(MATCH, WRAP)) }
+            }, "others"))
+        if (loading) list.alpha = 0.35f
+        addView(kit.topBar(if (arrived) "경유지 근처" else remainText(), micPill()), lp(MATCH, WRAP))
+        addView(kit.twoCol(narrow, left, list), lp(MATCH, 0, 1f).apply { topMargin = dp(16) })
     }
 
     /** 주차 직후 (PRD S7) · 주차 중 (S15) · 정차 중 (S16) */
@@ -614,64 +806,76 @@ class MainActivity : Activity() {
     private fun lotDeals(s: ParkingSession): List<OtherDeal> =
         recommendation?.options?.firstOrNull { it.lotId == s.lotId }?.deals.orEmpty()
 
-    private fun parkedNowScreen(s: ParkingSession, now: Long): View = kit.pad(Ui.vbox(this, 0)).apply {
+    /** 넓은 창에서는 오른쪽 열을 떠 있는 판에 담는다 */
+    private fun side(v: LinearLayout): View? = when {
+        v.childCount == 0 -> null
+        compact() -> kit.scroll(v)
+        // 판은 내용만큼만. 빈 흰 판이 화면을 채우지 않게 한다
+        else -> FrameLayout(this).apply {
+            addView(kit.sheet(Ui.vbox(this@MainActivity)).apply { addView(kit.scroll(v), lp(MATCH, WRAP)) }, FrameLayout.LayoutParams(MATCH, WRAP))
+        }
+    }
+
+    private fun parkedNowScreen(s: ParkingSession, now: Long): View = kit.pad(Ui.vbox(this, 0), compact()).apply {
         val planned = s.plannedMin ?: shownDefaultStay()
         val rule = s.rule
-        val left = kit.col(18,
-            kit.status("P · 주차 시작", micPill()),
+        val left = kit.col(20,
             s.farFrom?.let { placeCheck(s) },
             kit.label("${s.lotName}에 세웠어요"),
-            kit.title(if (s.hasBenefit) "${s.storeName}\n이용하고 주차 등록하세요" else "${s.lotName}\n주차 시간을 챙겨 드려요"),
+            kit.title(if (s.hasBenefit) "${s.storeName}\n이용하고 주차 등록하세요" else "${s.lotName}\n주차 시간을 챙겨 드려요", fit(56)),
+            kit.spring().takeIf { !compact() },
             rule?.let {
                 val f = ExitFee.of(it, planned, s.freeMin)
-                if (s.hasBenefit) kit.split(Triple("등록하면", Ui.won(f.withBenefit), true), Triple("안 하면 · ${durationText(planned)}", Ui.won(f.withoutBenefit), false))
-                else kit.split(Triple("${durationText(planned)} 머물면", Ui.won(f.withoutBenefit), false), null)
+                if (s.hasBenefit) kit.duo(Triple("등록하면", Ui.won(f.withBenefit), true), Triple("안 하면 · ${durationText(planned)}", Ui.won(f.withoutBenefit), false), fit(64))
+                else kit.duo(Triple("${durationText(planned)} 머물면", Ui.won(f.withoutBenefit), false), null, fit(64))
             },
-            kit.spring().takeIf { !compact() },
         )
         if (!compact()) left.addView(walkBack(s, false), lp(MATCH, WRAP))
         val picks = lotDeals(s).filter { it.storeName != s.storeName }
-        val right = kit.col(15,
-            kit.kv(listOfNotNull(
-                Triple("세운 시각", clock(s.startedAt), false),
-                Triple("머물 예정", "${durationText(planned)} · ${clock(s.startedAt + planned * 60_000L)}까지", false),
-                rule?.let { Triple("요금 규칙", FeeText.rule(it), false) },
-                s.redeemHint?.takeIf { s.hasBenefit }?.let { Triple("등록 방법", it, false) },
+        val right = kit.col(14,
+            kit.table(listOfNotNull(
+                "세운 시각" to clock(s.startedAt),
+                "머물 예정" to "${durationText(planned)} · ${clock(s.startedAt + planned * 60_000L)}까지",
+                rule?.let { "요금 규칙" to FeeText.rule(it) },
+                s.redeemHint?.takeIf { s.hasBenefit }?.let { "등록 방법" to it },
             )),
-            if (picks.isNotEmpty()) Ui.text(this@MainActivity, "다른 혜택 가게로 바꾸기", 22, Ui.MUTED, 700).apply { setPadding(dp(6), dp(6), 0, 0) } else null,
-            *picks.take(3).map { x -> kit.deal(x.storeName, x.reason.removePrefix(x.storeName).trim(), Ui.won(x.fee), false) { tracker.switchDeal(x) } }.toTypedArray(),
+            if (picks.isNotEmpty()) Ui.text(this@MainActivity, "다른 혜택 가게로 바꾸기", 24, Ui.INK, 700).apply { setPadding(dp(4), dp(14), 0, 0) } else null,
+            *picks.take(3).map { x -> kit.deal(x.storeName, cond(x), Ui.won(x.fee), false, soft = true) { tracker.switchDeal(x) } }.toTypedArray(),
         )
-        if (compact()) { right.addView(kit.spring()); right.addView(walkBack(s, false), lp(MATCH, WRAP)) }
-        addView(kit.twoCol(compact(), left, kit.scroll(right)), lp(MATCH, MATCH))
+        addView(kit.topBar("P · 주차 시작", micPill()), lp(MATCH, WRAP))
+        addView(kit.twoCol(compact(), left, side(right), 1.15f), lp(MATCH, 0, 1f).apply { topMargin = dp(16) })
+        // 좁은 창: 걷는 길은 스크롤 밖 맨 아래에 고정
+        if (compact()) addView(walkBack(s, false), lp(MATCH, WRAP).apply { topMargin = dp(14) })
     }
 
-    private fun parkingScreen(s: ParkingSession, now: Long): View = kit.pad(Ui.vbox(this, 0)).apply {
+    private fun parkingScreen(s: ParkingSession, now: Long): View = kit.pad(Ui.vbox(this, 0), compact()).apply {
         val e = s.elapsedMin(now)
         val rule = s.rule
         val fee = s.fee(now)
         val planned = s.plannedMin
         val left = kit.col(18,
-            kit.status("P · 주차 중", micPill()),
             s.farFrom?.let { placeCheck(s) },
             kit.label("${s.lotName}에 세운 지"),
-            Ui.text(this@MainActivity, durationText(e), if (compact()) 96 else 120, Ui.TEXT, 900).apply { letterSpacing = -0.02f },
-            kit.small("${clock(s.startedAt)}부터" + (planned?.let { p -> if (e <= p) " · 예정(${durationText(p)})까지 ${durationText(p - e)} 남았어요" else " · 예정보다 ${durationText(e - p)} 더 머물렀어요" } ?: "")),
-            fee?.let {
-                if (s.hasBenefit) kit.split(Triple("지금 나가면 · 등록했으면", Ui.won(it.withBenefit), true), Triple("등록 안 했으면", Ui.won(it.withoutBenefit), false))
-                else kit.split(Triple("지금 나가면", Ui.won(it.withoutBenefit), false), null)
-            },
-            rule?.let { r -> nextStepText(s, r, e)?.let { kit.stale(it) } },
+            Ui.text(this@MainActivity, durationText(e), if (compact()) 96 else 132, Ui.INK, 800).apply { letterSpacing = -0.03f; maxLines = 1 },
+            kit.body("${clock(s.startedAt)}부터" + (planned?.let { p -> if (e <= p) " · 예정(${durationText(p)})까지 ${durationText(p - e)} 남았어요" else " · 예정보다 ${durationText(e - p)} 더 머물렀어요" } ?: "")),
             kit.spring().takeIf { !compact() },
+            fee?.let {
+                if (s.hasBenefit) kit.duo(Triple("지금 나가면 · 등록했으면", Ui.won(it.withBenefit), true), Triple("등록 안 했으면", Ui.won(it.withoutBenefit), false), fit(64))
+                else kit.duo(Triple("지금 나가면", Ui.won(it.withoutBenefit), false), null, fit(64))
+            },
+            rule?.let { r -> nextStepText(s, r, e)?.let { kit.warn(it) } },
         )
         if (!compact()) left.addView(walkBack(s, true), lp(MATCH, WRAP))
-        val right = kit.col(15,
+        val right = kit.col(16,
+            rule?.let { Ui.text(this@MainActivity, "요금이 오르는 계단", 24, Ui.INK, 700).apply { setPadding(dp(4), 0, 0, dp(4)) } },
             rule?.let { r -> kit.ladder(FeeText.ladder(r, e).map { Triple(it.label, Ui.won(it.fee), it.now) }) },
-            if (s.hasBenefit) kit.kv(listOfNotNull(
-                Triple("등록할 가게", s.reason.ifEmpty { s.storeName ?: "" }, false),
-                s.redeemHint?.let { Triple("등록 방법", it, false) })) else null,
+            if (s.hasBenefit) kit.table(listOfNotNull(
+                "등록할 가게" to s.reason.ifEmpty { s.storeName ?: "" },
+                s.redeemHint?.let { "등록 방법" to it })) else null,
         )
-        if (compact()) { right.addView(kit.spring()); right.addView(walkBack(s, true), lp(MATCH, WRAP)) }
-        addView(kit.twoCol(compact(), left, kit.scroll(right)), lp(MATCH, MATCH))
+        addView(kit.topBar("P · 주차 중", micPill()), lp(MATCH, WRAP))
+        addView(kit.twoCol(compact(), left, side(right), 1.15f), lp(MATCH, 0, 1f).apply { topMargin = dp(16) })
+        if (compact()) addView(walkBack(s, true), lp(MATCH, WRAP).apply { topMargin = dp(14) })
     }
 
     /** 다음에 낼 돈이 오르는 시각 한 줄 */
@@ -690,115 +894,119 @@ class MainActivity : Activity() {
      * 정차 중 5분 타이머 (PRD S16). 큰 글자는 분 단위("3분 남았어요"), 마지막 1분만 초.
      * 1분 = 막대 하나. 남은 시간만큼 막대가 차 있고 지나면 위에서부터 빠진다.
      */
-    private fun stopTimerScreen(s: ParkingSession): View = kit.pad(Ui.vbox(this, 0)).apply {
+    private fun stopTimerScreen(s: ParkingSession): View = kit.pad(Ui.vbox(this, 0), compact()).apply {
         val now = System.currentTimeMillis()
         val end = s.startedAt + STOP_MIN * 60_000L
         val leftS = ((end - now) / 1000).toInt().coerceAtLeast(0)
         val lastMinute = leftS < 60
         val over = leftS == 0
-        val hot = if (lastMinute) Ui.AMBER else Ui.TEXT
-        val bigText = when { over -> "끝났어요"; lastMinute -> "${leftS}초"; else -> "${(leftS + 59) / 60}분" }
+        val hot = if (lastMinute) Ui.WARN else Ui.INK
+        val bigText = when { over -> "끝났어요"; lastMinute -> "${leftS}초"; else -> "${leftS / 60}분" } // 분은 내림: 실제보다 넉넉해 보이지 않게 (PRD S16)
         val head = kit.col(18,
-            kit.status("P · 정차 중", micPill()),
-            kit.label("정차 중 · ${s.lotName}"),
+            kit.label("정차 중"),
+            kit.title(s.lotName, if (compact()) 34 else Ui.TITLE).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END },
+            kit.spring().takeIf { !compact() },
             Ui.hbox(this@MainActivity, 18).apply {
                 gravity = Gravity.BOTTOM
-                addView(Ui.text(this@MainActivity, bigText, if (compact()) 112 else 150, hot, 900).apply { letterSpacing = -0.03f })
-                if (!over) addView(kit.small("남았어요", 36, hot), lp(WRAP, WRAP).apply { bottomMargin = dp(14) })
+                addView(Ui.text(this@MainActivity, bigText, if (compact()) 112 else if (over) 132 else 180, hot, 800).apply { letterSpacing = -0.03f; maxLines = 1 })
+                if (!over) addView(kit.body("남았어요", 36, hot, 600), lp(WRAP, WRAP).apply { bottomMargin = dp(if (compact()) 14 else 26) })
             },
-            kit.small("${clock(s.startedAt)} 정차 시작 · ${clock(end).substringAfter(" ")}까지", 28),
-            kit.stale(when {
-                over -> "정차 5분이 지났어요 · 더 있으려면 주차장으로 옮겨 주세요"
-                lastMinute -> "${leftS}초 뒤 정차 시간이 끝나요 · 더 있으려면 주차장으로"
-                else -> "소화전 · 교차로 모퉁이 · 버스정류소 · 횡단보도 앞은 5분 안이라도 안 돼요"
-            }),
+            kit.body("${clock(s.startedAt)} 정차 시작 · ${clock(end).substringAfter(" ")}까지", 28),
+            kit.spring().takeIf { !compact() },
         )
+        val warn = kit.warn(when {
+            over -> "정차 5분이 지났어요 · 더 있으려면 주차장으로 옮겨 주세요"
+            lastMinute -> "${leftS}초 뒤 정차 시간이 끝나요 · 더 있으려면 주차장으로"
+            else -> "소화전 · 교차로 모퉁이 · 버스정류소 · 횡단보도 앞은 5분 안이라도 안 돼요"
+        })
         // 막대 5개: i 번째 막대는 남은 (leftS/60 - i) 만큼 아래에서부터 찬다
-        val barH = if (compact()) 160 else 360
-        val bars = Ui.hbox(this@MainActivity, 14).apply {
-            gravity = Gravity.BOTTOM
-            val remain = leftS / 60.0
-            (0 until STOP_MIN).forEach { i ->
-                val fill = (remain - i).coerceIn(0.0, 1.0)
-                addView(android.widget.FrameLayout(this@MainActivity).apply {
-                    background = Ui.rounded(Ui.RAISED, 20, this@MainActivity)
-                    if (fill > 0) addView(View(this@MainActivity).apply { background = Ui.rounded(if (lastMinute) Ui.AMBER else Ui.ACCENT, 20, this@MainActivity) },
-                        android.widget.FrameLayout.LayoutParams(MATCH, (dp(barH) * fill).toInt(), Gravity.BOTTOM))
-                }, lp(0, dp(barH), 1f))
-            }
-        }
+        val remain = leftS / 60.0
+        val bars = kit.bars((0 until STOP_MIN).map { (remain - it).coerceIn(0.0, 1.0) }, if (compact()) 150 else 760, if (!lastMinute && Ui.night) Ui.INK2 else hot)
         val button = kit.big("5분 넘게 걸리면 · 주차장 보기", false) { tracker.cancelSession(); stayMin = shownDefaultStay(); recompute() }
-        if (compact()) addView(kit.col(24, head, bars, kit.spring(), button), lp(MATCH, MATCH))
-        else addView(Ui.hbox(this@MainActivity, 56).apply {
-            addView(kit.col(24, head, kit.spring(), button), lp(0, MATCH, 1.1f))
-            addView(Ui.vbox(this@MainActivity).apply { gravity = Gravity.BOTTOM; addView(kit.spring()); addView(bars, lp(MATCH, WRAP)) }, lp(0, MATCH, 1f))
-        }, lp(MATCH, MATCH))
+        addView(kit.topBar("P · 정차 중", micPill()), lp(MATCH, WRAP))
+        if (compact()) addView(kit.col(22, head, bars, kit.spring(), warn, button), lp(MATCH, 0, 1f).apply { topMargin = dp(16) })
+        else addView(Ui.hbox(this@MainActivity, 64).apply {
+            addView(kit.col(22, head.also { it.tag = null }, warn, button).also { c ->
+                (head.layoutParams as LinearLayout.LayoutParams).apply { height = 0; weight = 1f }
+            }, lp(0, MATCH, 1.15f))
+            addView(kit.sheet(Ui.vbox(this@MainActivity)).apply {
+                addView(Ui.hbox(this@MainActivity).apply {
+                    addView(Ui.text(this@MainActivity, "남은 시간", 24, Ui.INK, 700)); addView(Ui.grow(this@MainActivity))
+                    addView(Ui.text(this@MainActivity, "한 칸에 1분", Ui.CAP, Ui.INK3))
+                }, lp(MATCH, WRAP))
+                addView(kit.spring())
+                addView(bars, lp(MATCH, WRAP))
+            }, lp(0, MATCH, 1f))
+        }, lp(MATCH, 0, 1f).apply { topMargin = dp(16) })
     }
 
     /** 출차 확인 (PRD S8). 주행 중이면 표를 빼고 질문·금액·버튼만 */
-    private fun reminderScreen(rm: ExitReminder, drive: Boolean): View = kit.pad(Ui.vbox(this, 0)).apply {
+    private fun reminderScreen(rm: ExitReminder, drive: Boolean): View = kit.pad(Ui.vbox(this, 0), compact()).apply {
         val s = rm.session
         val fee = rm.fee
         val store = s.hasBenefit
         val mins = fee?.minutes ?: s.elapsedMin(rm.endedAt)
         val left = kit.col(18,
-            kit.status("P → D · 한 번만 물어요", micPill()),
             kit.label("출발 전에 확인하세요"),
-            kit.title(if (store) "${s.storeName}에서\n주차 등록하셨나요?" else "${s.lotName}\n주차 요금을 확인하세요", 54),
+            kit.title(if (store) "${s.storeName}에서\n주차 등록하셨나요?" else "${s.lotName}\n주차 요금을 확인하세요", fit(56)),
             fee?.let {
-                if (store) kit.split(Triple("등록했으면", Ui.won(it.withBenefit), true), Triple("안 했으면", Ui.won(it.withoutBenefit), false))
-                else kit.split(Triple("${durationText(mins)} 주차", Ui.won(it.withoutBenefit), false), null)
+                if (store) kit.duo(Triple("등록했으면", Ui.won(it.withBenefit), true), Triple("안 했으면", Ui.won(it.withoutBenefit), false), fit(64))
+                else kit.duo(Triple("${durationText(mins)} 주차", Ui.won(it.withoutBenefit), false), null, fit(64))
             },
             kit.spring(),
             kit.big(if (store) "등록했어요" else "확인") { tracker.dismissReminder(registered = store) },
             if (store) kit.big("아직이요", false) { tracker.dismissReminder(registered = false) } else null,
-            Ui.text(this@MainActivity, "답은 이번 달 아낀 돈에 기록돼요", 21, Ui.MUTED).apply { gravity = Gravity.CENTER },
+            Ui.text(this@MainActivity, "답은 이번 달 아낀 돈에 기록돼요", Ui.CAP, Ui.INK3).apply { gravity = Gravity.CENTER },
         )
-        if (drive) return@apply addView(left, lp(MATCH, MATCH))
+        addView(kit.topBar("P → D · 한 번만 물어요", micPill()), lp(MATCH, WRAP))
+        if (drive) return@apply addView(left, lp(MATCH, 0, 1f).apply { topMargin = dp(16) })
         val r = s.rule
         val now = java.time.ZonedDateTime.now(SEOUL)
         val sum = MonthSummary.of(tracker.state.history, now.year, now.monthValue, SEOUL)
-        val right = kit.col(15,
-            kit.kv(listOfNotNull(
-                Triple("주차장", s.lotName, false),
-                Triple("세운 시간", "${clock(s.startedAt)} → ${clock(rm.endedAt).removePrefix("오전 ").removePrefix("오후 ")} · ${durationText(mins)}", false),
-                s.plannedMin?.let { p -> Triple("예정보다", if (mins > p) "${durationText(mins - p)} 더 머물렀어요" else if (mins < p) "${durationText(p - mins)} 일찍 나왔어요" else "예정대로예요", false) },
-                r?.let { Triple("안 했을 때", FeeText.formula(it, mins), false) },
-                (r as? FeeRule.Metered)?.dailyMax?.let { m -> Triple("하루 최대", Ui.won(m) + if ((fee?.withoutBenefit ?: 0) >= m) " · 이미 최대예요" else "", false) },
-                s.redeemHint?.takeIf { store }?.let { Triple("등록 방법", it, false) },
+        val right = kit.col(16,
+            kit.table(listOfNotNull(
+                "주차장" to s.lotName,
+                "세운 시간" to "${clock(s.startedAt)} → ${clock(rm.endedAt).removePrefix("오전 ").removePrefix("오후 ")} · ${durationText(mins)}",
+                s.plannedMin?.let { p -> "예정보다" to if (mins > p) "${durationText(mins - p)} 더 머물렀어요" else if (mins < p) "${durationText(p - mins)} 일찍 나왔어요" else "예정대로예요" },
+                r?.let { "안 했을 때" to FeeText.formula(it, mins) },
+                (r as? FeeRule.Metered)?.dailyMax?.let { m -> "하루 최대" to Ui.won(m) + if ((fee?.withoutBenefit ?: 0) >= m) " · 이미 최대예요" else "" },
+                s.redeemHint?.takeIf { store }?.let { "등록 방법" to it },
             )),
-            kit.split(Triple("${now.monthValue}월 혜택으로 아낀 돈", Ui.won(sum.saved), true), Triple("${now.monthValue}월 주차", "${sum.count}번", false), 48),
+            kit.hairline(),
+            kit.duo(Triple("${now.monthValue}월 혜택으로 아낀 돈", Ui.won(sum.saved), sum.saved > 0), Triple("${now.monthValue}월 주차", "${sum.count}번", false), 44)
+                .apply { background = null },
         )
-        addView(kit.twoCol(compact(), left, kit.scroll(right)), lp(MATCH, MATCH))
+        addView(kit.twoCol(compact(), left, side(right), 1.15f), lp(MATCH, 0, 1f).apply { topMargin = dp(16) })
     }
 
-    /** 추천 없음·실패·불러오는 중 (PRD S12) */
-    private fun emptyScreen(): View = kit.pad(Ui.vbox(this, 0)).apply {
+    /** 추천 없음·실패·불러오는 중 (PRD S12). 실패에는 언제나 다음 행동 버튼이 있다 */
+    private fun emptyScreen(): View = kit.pad(Ui.vbox(this, 0), compact()).apply {
         val p = place
         val noLots = recommendation?.options?.isEmpty() == true
-        addView(kit.status(""), lp(MATCH, WRAP))
+        addView(kit.topBar(""), lp(MATCH, WRAP))
         addView(kit.spring())
         addView(kit.col(24,
             when {
-                failed -> kit.title("추천을 불러오지 못했어요")
-                noLots -> kit.title("800m 안에 아는 주차장이 없어요")
-                else -> kit.title("${p?.name ?: "목적지"} 주변\n주차를 찾고 있어요")
+                failed -> kit.title("추천을 불러오지 못했어요", fit(56))
+                noLots -> kit.title("800m 안에 아는 주차장이 없어요", fit(56))
+                else -> kit.title("${p?.name ?: "목적지"} 주변\n주차를 찾고 있어요", fit(56))
             },
             when {
-                failed -> kit.small("인터넷 연결이 불안정해요. 내비 안내는 그대로 쓸 수 있어요.", 30)
-                noLots -> kit.small("지금은 서울 지하철 2호선 역 주변만 알려 드려요.", 30)
+                failed -> kit.body("인터넷 연결이 불안정해요. 내비 안내는 그대로 쓸 수 있어요.", 30)
+                noLots -> kit.body("지금은 서울 지하철 2호선 역 주변만 알려 드려요.", 30)
                 else -> null
             },
-            if (failed) kit.big("다시 시도") { failed = false; render(); load() } else null,
+            if (failed) kit.left(kit.big("다시 시도") { failed = false; render(); load() }.apply { minimumWidth = dp(420) }) else null,
         ), lp(MATCH, WRAP))
+        addView(kit.spring())
         addView(kit.spring())
     }
 
     /** 추천과 다른 곳에 세운 것 같을 때: 차 근처 후보 중 고르거나 "여기 맞아요". */
     private fun placeCheck(s: ParkingSession): View = kit.col(12,
-        kit.stale("${s.lotName}에서 ${s.farFrom!!.distanceM}m 떨어진 곳이에요 · 어디에 세우셨나요?"),
+        kit.warn("${s.lotName}에서 ${s.farFrom!!.distanceM}m 떨어진 곳이에요 · 어디에 세우셨나요?"),
         *ParkCheck.guesses(s, recommendation?.options.orEmpty()).map { o ->
-            kit.deal(o.name, "차 근처 주차장 · ${o.rule?.let { FeeText.rule(it) } ?: "요금 정보 없음"}", "여기", false) {
+            kit.deal(o.name, "차 근처 주차장 · ${o.rule?.let { FeeText.rule(it) } ?: "요금 정보 없음"}", "여기", false, tagged = false) {
                 tracker.relocate(Candidate(o, recommendation?.storeName, s.destName, s.plannedMin))
             }
         }.toTypedArray(),
@@ -806,72 +1014,43 @@ class MainActivity : Activity() {
     )
 
     /**
-     * 목적지 없음 (PRD S1). 가운데 제목 + 버튼 하나 + 실제 비교 화면 미리보기(아래로 잘림).
-     * 미리보기는 데모 목적지의 실제 계산 결과를 정적으로 보여준다: "가게 혜택 0원"이 먼저 보이게.
+     * 목적지 없음 (PRD S1). 이 앱이 뭘 하는지 한 문장 + 버튼 하나 + 실제 보드 미리보기.
+     * 미리보기는 데모 목적지의 실제 계산 결과를 정적으로 보여준다: 노란 "0원"이 먼저 보이게.
      */
-    private fun waitingScreen(): View = FrameLayout(this).apply {
-        setBackgroundColor(Ui.CARD)
-        addView(Ui.vbox(this@MainActivity).apply {
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, dp(84), 0, 0)
-            addView(Ui.text(this@MainActivity, "목적지 주변 주차 혜택", 57, Ui.TEXT, 900).apply { letterSpacing = -0.02f; gravity = Gravity.CENTER }, lp(WRAP, WRAP))
-            addView(Ui.text(this@MainActivity, "같은 건물 다른 가게 혜택까지 찾아서\n실제로 낼 돈으로 비교해 드려요", 33, Ui.TEXT2).apply {
-                gravity = Gravity.CENTER; setLineSpacing(0f, 1.5f); setPadding(0, dp(20), 0, 0)
-            }, lp(WRAP, WRAP))
-            addView(Ui.button(this@MainActivity, "내비에서 목적지 찾기", true, 102, 33) {
+    private fun waitingScreen(): View {
+        val narrow = compact()
+        val intro = Ui.vbox(this, 0).apply {
+            addView(kit.title("목적지 주변\n주차 혜택", if (narrow) 60 else 84).apply { setLineSpacing(0f, 1.1f) })
+            addView(kit.body("같은 건물 다른 가게 혜택까지 찾아서\n실제로 낼 돈으로 비교해 드려요", if (narrow) 28 else 32).apply { setLineSpacing(0f, 1.45f) },
+                lp(MATCH, WRAP).apply { topMargin = dp(24) })
+            addView(kit.left(Ui.button(this@MainActivity, "내비에서 목적지 찾기", true, 112, 32) {
                 if (!navi.openNavigation()) voice.speak("내비에 목적지를 설정해 주세요.")
-            }.apply { background = Ui.rounded(Ui.ACCENT, 999, this@MainActivity) }, lp(dp(520), dp(102)).apply { topMargin = dp(42) })
-            // 미리보기: 아래 테두리 없이 화면 밖으로 잘린다
-            addView(Ui.vbox(this@MainActivity, 15).apply {
-                setPadding(dp(39), dp(36), dp(39), 0)
-                background = android.graphics.drawable.GradientDrawable().apply {
-                    setColor(Ui.BG); val r = dp(42).toFloat()
-                    cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f); setStroke(dp(3), Ui.RAISED)
-                }
-                addView(Ui.hbox(this@MainActivity).apply {
-                    addView(Ui.text(this@MainActivity, "필앤필버거 강남본점", 36, Ui.TEXT, 900))
-                    addView(Ui.grow(this@MainActivity))
-                    addView(Ui.text(this@MainActivity, "1시간 30분 머물면", 24, Ui.MUTED))
-                }, lp(MATCH, WRAP).apply { bottomMargin = dp(9) })
-                addView(previewCard(1, "아크플레이스", null, null, "혜택 적용", "0원", true, "필앤필버거 강남본점", "이용 시 2시간 무료", null), lp(MATCH, WRAP))
-                addView(previewCard(2, "테헤란로 146 주차장", "도보 1분", "1시간 무료 · 이후 10분당 1,000원", "일반 주차 시", "3,000원", false, "화이팅정형외과의원", "이용 시 무료", "혜택 가게 외 2곳 보기 ▸"), lp(MATCH, WRAP))
-            }, lp(dp(860), 0, 1f).apply { topMargin = dp(60) })
-        }, FrameLayout.LayoutParams(MATCH, MATCH))
-    }
-
-    /** 미리보기용 주차장 카드 (PRD lotCard 축소판) */
-    private fun previewCard(n: Int, name: String, walk: String?, rule: String?, feeLabel: String, fee: String, zero: Boolean,
-                            store: String, cond: String, more: String?): View = Ui.vbox(this, 15).apply {
-        setPadding(dp(33), dp(24), dp(33), dp(24))
-        background = Ui.rounded(Ui.CARD, 30, this@MainActivity)
-        addView(Ui.hbox(this@MainActivity, 21).apply {
-            addView(Ui.text(this@MainActivity, "$n", 25, Ui.TEXT, 900).apply {
-                gravity = Gravity.CENTER; background = Ui.rounded(Ui.RAISED, 999, this@MainActivity); layoutParams = lp(dp(54), dp(54))
-            })
-            addView(Ui.vbox(this@MainActivity, 6).apply {
-                addView(Ui.hbox(this@MainActivity, 15).apply {
-                    addView(Ui.text(this@MainActivity, name, 33, Ui.TEXT, 700).apply { maxLines = 1 })
-                    walk?.let { addView(Ui.text(this@MainActivity, it, 22, Ui.TEXT2, 700).apply {
-                        setPadding(dp(12), dp(4), dp(12), dp(4)); background = Ui.rounded(Ui.RAISED, 12, this@MainActivity) }) }
-                })
-                rule?.let { addView(Ui.text(this@MainActivity, it, 22, Ui.MUTED)) }
-            }, lp(0, WRAP, 1f))
-            addView(Ui.vbox(this@MainActivity).apply {
-                gravity = Gravity.END
-                addView(Ui.text(this@MainActivity, feeLabel, 20, Ui.MUTED))
-                addView(Ui.text(this@MainActivity, fee, 39, if (zero) Ui.ACCENT_TEXT else Ui.TEXT, 900))
-            })
-        })
-        addView(Ui.hbox(this@MainActivity).apply {
-            setPadding(dp(24), dp(15), dp(24), dp(15))
-            background = Ui.rounded(Ui.RAISED, 21, this@MainActivity)
-            addView(Ui.vbox(this@MainActivity).apply {
-                addView(Ui.text(this@MainActivity, store, 25, Ui.TEXT, 700))
-                addView(Ui.text(this@MainActivity, cond, 22, Ui.TEXT2))
-            }, lp(0, WRAP, 1f))
-            addView(Ui.text(this@MainActivity, "0원", 36, Ui.ACCENT_TEXT, 900))
-        }, lp(MATCH, WRAP))
-        more?.let { addView(Ui.text(this@MainActivity, it, 22, Ui.ACCENT_TEXT, 700).apply { setPadding(dp(6), 0, 0, 0) }) }
+            }.apply { minimumWidth = dp(460) }), lp(MATCH, WRAP).apply { topMargin = dp(40) })
+        }
+        val preview = Ui.vbox(this, 0).apply {
+            setPadding(dp(20), dp(32), dp(20), dp(14))
+            background = Ui.rounded(Ui.SURFACE, 36, this@MainActivity)
+            addView(Ui.hbox(this@MainActivity, 16).apply {
+                setPadding(dp(24), 0, dp(24), dp(12))
+                addView(Ui.text(this@MainActivity, "필앤필버거 강남본점", 34, Ui.INK, 800).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }, lp(0, WRAP, 1f))
+                addView(Ui.text(this@MainActivity, "1시간 30분 머물면", 24, Ui.INK3))
+            }, lp(MATCH, WRAP))
+            addView(kit.row(1, true, false, "아크플레이스", emptyList(),
+                listOf(kit.line("필앤필버거 강남본점 이용 시 2시간 무료")), null, kit.price("0원", 40, true), "혜택 적용"), lp(MATCH, WRAP))
+            addView(kit.row(2, false, false, "테헤란로 146 주차장", listOf(kit.tag("도보 1분")),
+                listOf(kit.line("1시간 무료 · 이후 10분당 1,000원", color = Ui.INK3), kit.line("화이팅정형외과의원 이용 시 무료 · 외 2곳", "0원")),
+                null, kit.price("3,000원", 40, false), "일반 주차 시").apply { background = null }, lp(MATCH, WRAP))
+        }
+        return kit.pad(Ui.vbox(this, 0), narrow).apply {
+            addView(kit.topBar(""), lp(MATCH, WRAP))
+            if (narrow) {
+                addView(intro, lp(MATCH, WRAP).apply { topMargin = dp(48) })
+                addView(preview, lp(MATCH, WRAP).apply { topMargin = dp(56) })
+            } else addView(Ui.hbox(this@MainActivity, 64).apply {
+                addView(intro, lp(0, WRAP, 1f))
+                addView(preview, lp(0, WRAP, 1.1f))
+            }, lp(MATCH, 0, 1f).apply { bottomMargin = dp(72) })
+        }
     }
 
     // ---- 음성으로 묻기 (SpeechToText)
@@ -879,8 +1058,6 @@ class MainActivity : Activity() {
     private val listener by lazy { Listener(this, ::onListen) }
     /** 듣는 중·들은 말을 화면 위에 띄우는 한 줄. null 이면 숨김. */
     private var heard: String? = null
-
-    private fun micButton(height: Int) = Ui.button(this, "말로 묻기", false, height, if (compact()) 26 else 30) { ask() }
 
     private fun ask() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
