@@ -10,6 +10,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.parkdeal.core.navi.Bookmark
 import com.parkdeal.core.navi.Place
 
 /**
@@ -24,6 +25,8 @@ class NaviSource(
     private val onRemain: (destName: String, meters: Int) -> Unit = { _, _ -> },
     /** 경유지(고른 주차장)에 다 왔다. */
     private val onWaypointArrived: (name: String) -> Unit = {},
+    /** 내비 즐겨찾기(집·회사·기타). 시작할 때와 바뀔 때 받는다. */
+    private val onBookmarks: (List<Bookmark>) -> Unit = {},
 ) {
     private val navi = NaviHelper(context.applicationContext)
     private val main = Handler(Looper.getMainLooper())
@@ -41,6 +44,18 @@ class NaviSource(
             val d = info.destination ?: return
             main.post { onRemain(d.name, d.distance) }
         }
+        override fun onBookmarkInfo(list: List<ai.pleos.playground.navi.data.BookmarkInfo>) {
+            val bs = list.map {
+                val kind = when (it.category) {
+                    ai.pleos.playground.navi.constants.BookmarkType.HOME -> Bookmark.Kind.HOME
+                    ai.pleos.playground.navi.constants.BookmarkType.OFFICE -> Bookmark.Kind.OFFICE
+                    else -> Bookmark.Kind.OTHER
+                }
+                Bookmark(it.name, it.latitude, it.longitude, kind)
+            }
+            main.post { onBookmarks(bs) }
+        }
+        override fun onBookMarkChanged() { navi.getBookmarkInfo() }
         override fun onWayPointArrived(info: ai.pleos.playground.navi.data.WaypointArrivedInfo) {
             main.post { onWaypointArrived(info.name) }
         }
@@ -53,6 +68,7 @@ class NaviSource(
                 available = true
                 navi.addListener(listener)
                 navi.getDestinationInfo()
+                navi.getBookmarkInfo()
                 main.post { pending?.let { pending = null; route(it) } }
             },
             { Log.w(TAG, "내비 연결 실패: ${it.message}") },

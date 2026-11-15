@@ -37,6 +37,7 @@ import com.parkdeal.core.api.LotsResponse
 import com.parkdeal.core.api.ApiRequest
 import com.parkdeal.core.api.Origin
 import com.parkdeal.core.navi.ApproachTrigger
+import com.parkdeal.core.navi.Bookmarks
 import com.parkdeal.core.navi.DestinationFollower
 import com.parkdeal.core.navi.NaviTalk
 import com.parkdeal.core.navi.Place
@@ -76,7 +77,10 @@ class MainActivity : Activity() {
     /** 내비가 안내 중인 목적지가 있는지. 있으면 주차장은 경유지로 넣는다. */
     private var naviRoute = false
     private val follower = DestinationFollower()
-    private val navi by lazy { NaviSource(this, ::onNaviDestination, ::onRemain, ::onWaypointArrived) }
+    private val navi by lazy { NaviSource(this, ::onNaviDestination, ::onRemain, ::onWaypointArrived, { bookmarks = Bookmarks(it); Log.d(TAG, "즐겨찾기 ${it.size}곳: ${it.map { b -> b.kind }}") }) }
+    private var bookmarks = Bookmarks(emptyList())
+    /** 목적지가 집·회사면 그 즐겨찾기 이름. 이때는 주차 안내를 먼저 말하지 않는다 (PRD S11). */
+    private var routineName: String? = null
     private val approach = ApproachTrigger()
     /** 이 차의 특성. 전기차면 전기차 불가 주차장을 맨 뒤로 보낸다. */
     private var vehicle = com.parkdeal.core.Vehicle.UNKNOWN
@@ -154,7 +158,9 @@ class MainActivity : Activity() {
         Log.d(TAG, "navi destination ${next.name} remain=${remainMeters}m")
         place = next
         failed = false
-        briefPending = true
+        routineName = bookmarks.routine(next)?.name
+        // 집·회사로 가는 길이면 묻지도 않은 주차 안내를 하지 않는다. 앱을 열면 목록은 보여준다
+        briefPending = routineName == null
         // 이전 추천은 새 응답이 올 때까지 그대로 둔다 (화면이 "불러오는 중"으로 번쩍이지 않게)
         render()
         load()
@@ -170,7 +176,7 @@ class MainActivity : Activity() {
     private fun onRemain(destName: String, meters: Int) {
         if (destName != shownPlace?.name) return
         val t = target() ?: return
-        if (approach.onRemain(destName, meters)) voice.speak(NaviTalk.approaching(t))
+        if (routineName == null && approach.onRemain(destName, meters)) voice.speak(NaviTalk.approaching(t))
     }
 
     /** 경유지 도착(PRD S6): 자리가 없을 때 갈 다음 후보까지 말한다. */
@@ -260,7 +266,7 @@ class MainActivity : Activity() {
         super.onConfigurationChanged(newConfig)
         render()
     }
-    private fun shownName() = shownPlace?.name ?: "목적지"
+    private fun shownName() = routineName ?: shownPlace?.name ?: "목적지"
 
     /** 지금 고른 주차장을 "P 단에 넣으면 주차할 곳"으로 정한다. 주차 중·리마인드 중에는 건드리지 않는다. */
     private fun syncCandidate() {
