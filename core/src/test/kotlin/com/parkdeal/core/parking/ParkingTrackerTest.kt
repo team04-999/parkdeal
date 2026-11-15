@@ -120,6 +120,15 @@ class ParkingTrackerTest {
         assertEquals(90, t.state.session!!.elapsedMin(now))
     }
 
+    @Test fun `시간 건너뛰기는 1분에서 하루 사이만 받는다`() {
+        val t = tracker().apply { this.candidate = this@ParkingTrackerTest.candidate }
+        t.startNow()
+        assertNull(t.backdate(0))
+        assertNull(t.backdate(-30))
+        assertNull(t.backdate(24 * 60 + 1))
+        assertEquals(t0, t.state.session!!.startedAt)
+    }
+
     private class MemoryStore : StateStore {
         var value: String? = null
         override fun load() = value

@@ -91,10 +91,15 @@ class MainActivity : Activity() {
         demo(intent)
     }
 
-    /** 시연 영상용: `am start ... --ei skipMin 90` 이면 진행 중 주차를 90분 앞당긴다. */
+    /**
+     * 시연 영상용: `am start ... --ei skipMin 90` 이면 진행 중 주차를 90분 앞당긴다.
+     * 이 액티비티는 런처라 외부에 열려 있으므로 debug 빌드에서만 받고, 한 번 쓰면 지운다.
+     */
     private fun demo(intent: Intent?) {
-        val skip = intent?.getIntExtra(EXTRA_SKIP_MIN, 0) ?: 0
-        if (skip > 0) tracker.backdate(skip)
+        if (!BuildConfig.DEBUG || intent == null || !intent.hasExtra(EXTRA_SKIP_MIN)) return
+        val skip = intent.getIntExtra(EXTRA_SKIP_MIN, 0)
+        intent.removeExtra(EXTRA_SKIP_MIN)
+        tracker.backdate(skip)
     }
 
     override fun onStart() {
