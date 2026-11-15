@@ -13,6 +13,9 @@
     <uses-permission android:name="pleos.car.permission.NAVI_ROUTE_SEARCH" />
     <!-- 음성 안내: Pleos TextToSpeech -->
     <uses-permission android:name="pleos.car.permission.TTS_SERVICE" />
+    <!-- 음성으로 묻기: Pleos SpeechToText(온디바이스). 차량 마이크 음성을 외부로 보내지 않는다 -->
+    <uses-permission android:name="pleos.car.permission.STT_SERVICE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- 화면이 가려진 주행 중에도 기어를 받고 출차 알림을 보낸다 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />

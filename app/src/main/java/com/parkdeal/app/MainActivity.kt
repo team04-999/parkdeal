@@ -16,6 +16,8 @@ import com.parkdeal.app.data.FileResponseCache
 import com.parkdeal.app.data.HttpUrlTransport
 import com.parkdeal.app.drive.DrivingRestriction
 import com.parkdeal.app.navi.NaviSource
+import com.parkdeal.app.voice.Listener
+import com.parkdeal.core.voice.VoiceCommand
 import com.parkdeal.app.parking.Parking
 import com.parkdeal.app.parking.ParkingService
 import com.parkdeal.app.parking.Voice
@@ -101,7 +103,8 @@ class MainActivity : Activity() {
         if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
-        voice // TTS 엔진을 미리 띄워 첫 안내가 늦지 않게
+        voice // TTS·STT 엔진을 미리 띄워 첫 안내·첫 질문이 늦지 않게
+        listener
         driving
         navi.start()
         demo(intent)
@@ -131,6 +134,8 @@ class MainActivity : Activity() {
             shownPlace?.let { onRemain(it.name, m) }
         }
         intent.getStringExtra(EXTRA_ARRIVE)?.let { intent.removeExtra(EXTRA_ARRIVE); onWaypointArrived(it) }
+        // `--es say "2번으로"`: 말한 것처럼 처리한다 (에뮬레이터 마이크 없이 시연)
+        intent.getStringExtra(EXTRA_SAY)?.let { intent.removeExtra(EXTRA_SAY); onListen(Listener.State.Final(it)) }
         // `--es dest 필앤필버거`: 데모 목적지로 내비 경로를 건다 (내비에서 목적지를 검색하는 대신)
         intent.getStringExtra(EXTRA_DEST)?.let { name ->
             intent.removeExtra(EXTRA_DEST)
@@ -204,6 +209,7 @@ class MainActivity : Activity() {
         io.shutdownNow()
         navi.stop()
         driving.close()
+        listener.close()
         voice.close()
         super.onDestroy()
     }
@@ -264,6 +270,13 @@ class MainActivity : Activity() {
         }
         content.removeAllViews()
         content.addView(screen, FrameLayout.LayoutParams(MATCH, MATCH))
+        heard?.let { h ->
+            content.addView(Ui.text(this, h, 32, Ui.TEXT, 700).apply {
+                setPadding(dp(36), dp(22), dp(36), dp(22))
+                background = Ui.rounded(Ui.GLEO_BG, 24, this@MainActivity, Ui.GLEO, 2)
+                elevation = dp(8).toFloat()
+            }, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(24) })
+        }
     }
 
     // ---- 화면
@@ -298,15 +311,21 @@ class MainActivity : Activity() {
             addView(Ui.vbox(this@MainActivity, 14).apply {
                 opts.forEachIndexed { i, o -> addView(optionRow(i, o, i == index), lp(MATCH, WRAP)) }
                 addView(Ui.grow(this@MainActivity))
-                addView(Ui.text(this@MainActivity, "P단에 넣으면 ${index + 1}번 주차장으로 주차 시간을 챙겨 드려요", 24, Ui.ACCENT_TEXT, 700))
+                addView(Ui.hbox(this@MainActivity, 16).apply {
+                    addView(Ui.text(this@MainActivity, "P단에 넣으면 ${index + 1}번 주차장으로 주차 시간을 챙겨 드려요", 24, Ui.ACCENT_TEXT, 700), lp(0, WRAP, 1f))
+                    // 기어를 읽을 수 없는 차를 위한 수동 시작
+                    addView(Ui.button(this@MainActivity, "지금 주차 시작", false, 56, 22) { tracker.startNow() }.apply {
+                        setPadding(dp(24), 0, dp(24), 0); background = Ui.rounded(Ui.RAISED, 16, this@MainActivity)
+                    }, lp(WRAP, dp(56)))
+                })
                 addView(Ui.hbox(this@MainActivity, 20).apply {
                     val o = opts[index]
                     val guided = follower.guiding == o.name
                     addView(Ui.button(this@MainActivity, if (guided) "${index + 1}번 경유 중" else "${index + 1}번 경유지로", true, 104, 34) {
                         guide(o); render()
                     }, lp(0, dp(104), 2f))
+                    addView(micButton(104), lp(0, dp(104), 1f))
                     addView(Ui.button(this@MainActivity, "추천 듣기", false, 104, 30) { voice.speak(Briefing.sentence(r, stayMin)) }, lp(0, dp(104), 1f))
-                    addView(Ui.button(this@MainActivity, "주차 시작", false, 104, 30) { tracker.startNow() }, lp(0, dp(104), 1f))
                 })
             }, lp(0, MATCH, 1f))
         }, lp(MATCH, 0, 1f))
@@ -356,9 +375,12 @@ class MainActivity : Activity() {
                 if (at > now) addView(Ui.text(this@MainActivity, "무료 시간이 15분 남으면 음성으로 알려 드려요", 26, Ui.MUTED))
             }
             addView(Ui.grow(this@MainActivity))
-            addView(Ui.button(this@MainActivity, "주차 상태 듣기", true, 112, 36) {
-                voice.speak(ParkingTalk.status(s, System.currentTimeMillis()))
-            }, lp(MATCH, dp(112)))
+            addView(Ui.hbox(this@MainActivity, 24).apply {
+                addView(Ui.button(this@MainActivity, "주차 상태 듣기", true, 112, 36) {
+                    voice.speak(ParkingTalk.status(s, System.currentTimeMillis()))
+                }, lp(0, dp(112), 2f))
+                addView(micButton(112), lp(0, dp(112), 1f))
+            })
         }, lp(MATCH, 0, 1f))
         addView(Ui.text(this@MainActivity, "출발할 때(P → D) 혜택 등록을 확인해 드려요", 24, Ui.FAINT))
     }
@@ -508,7 +530,8 @@ class MainActivity : Activity() {
             }, lp(MATCH, WRAP))
         }
         addView(Ui.grow(this@MainActivity))
-        addView(Ui.text(this@MainActivity, "주행 중에는 간단히 보여드려요 · 정차하면 전체 비교가 열려요", 22, Ui.FAINT))
+        addView(micButton(104), lp(MATCH, dp(104)))
+        addView(Ui.text(this@MainActivity, "\"다른 데는?\" \"2번으로\"처럼 말해도 돼요 · 정차하면 전체 비교가 열려요", 22, Ui.FAINT))
     }
 
     /** 주행 중 출차 확인 (PRD S8): 질문 하나와 버튼 둘. 금액 비교·기록은 정차 후에. */
@@ -530,7 +553,82 @@ class MainActivity : Activity() {
             if (store) addView(Ui.button(this@MainActivity, "못 했어요", false, 120, 36) {
                 tracker.dismissReminder(registered = false)
             }, lp(0, dp(120), 1f))
+            addView(micButton(120), lp(0, dp(120), 1f))
         })
+    }
+
+    // ---- 음성으로 묻기 (SpeechToText)
+
+    private val listener by lazy { Listener(this, ::onListen) }
+    /** 듣는 중·들은 말을 화면 위에 띄우는 한 줄. null 이면 숨김. */
+    private var heard: String? = null
+
+    private fun micButton(height: Int) = Ui.button(this, "말로 묻기", false, height, 30) { ask() }
+
+    private fun ask() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
+            return
+        }
+        if (!listener.listen()) voice.speak("음성 인식을 준비하고 있어요. 잠시 뒤에 다시 눌러 주세요.")
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_MIC && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) ask()
+    }
+
+    private fun onListen(state: Listener.State) {
+        heard = when (state) {
+            Listener.State.Listening -> "듣고 있어요…"
+            is Listener.State.Partial -> "“${state.text}”"
+            is Listener.State.Final -> if (state.text.isBlank()) null else "“${state.text}”"
+            is Listener.State.Failed -> "잘 듣지 못했어요"
+        }
+        render()
+        when (state) {
+            is Listener.State.Final -> { answer(VoiceCommand.parse(state.text)); main.postDelayed({ heard = null; render() }, 3_000) }
+            is Listener.State.Failed -> { voice.speak("잘 듣지 못했어요. 다시 눌러 주세요."); main.postDelayed({ heard = null; render() }, 3_000) }
+            else -> {}
+        }
+    }
+
+    /** 알아들은 명령을 실행하고 한 문장으로 답한다. */
+    private fun answer(cmd: VoiceCommand) {
+        val st = tracker.state
+        val r = recommendation
+        val opts = r?.options.orEmpty()
+        when (cmd) {
+            VoiceCommand.Recommend ->
+                voice.speak(if (r != null) Briefing.sentence(r, stayMin) else "내비에 목적지를 먼저 설정해 주세요.")
+            is VoiceCommand.Pick -> {
+                val o = opts.getOrNull(cmd.rank - 1) ?: return voice.speak("${cmd.rank}번 후보는 없어요.")
+                index = cmd.rank - 1; guide(o); render()
+            }
+            VoiceCommand.Next -> {
+                if (opts.size < 2) return voice.speak("다른 후보가 없어요.")
+                val cur = opts.indexOfFirst { it.name == follower.guiding }.takeIf { it >= 0 } ?: index
+                val n = (cur + 1) % opts.size
+                val o = opts[n]
+                index = n; render()
+                voice.speak("${n + 1}번 ${o.name}, ${Ui.won(o.fee)}이에요. \"${n + 1}번으로\"라고 하면 경유지로 넣을게요.")
+            }
+            VoiceCommand.Status -> {
+                val s = st.session
+                val o = target()
+                voice.speak(when {
+                    s != null -> ParkingTalk.status(s, System.currentTimeMillis())
+                    o != null -> "${o.name}에 ${durationText(stayMin)} 머물면 ${Ui.won(o.fee)}이에요."
+                    else -> "아직 주차 정보가 없어요."
+                })
+            }
+            is VoiceCommand.Registered -> {
+                if (st.reminder == null) return voice.speak("지금은 확인할 출차가 없어요.")
+                tracker.dismissReminder(registered = cmd.yes)
+                voice.speak(if (cmd.yes) "기록했어요. 안전 운전하세요." else "미등록으로 기록했어요.")
+            }
+            VoiceCommand.Unknown -> voice.speak("\"제일 싼 곳\", \"2번으로\", \"지금 얼마야\"처럼 말씀해 주세요.")
+        }
     }
 
     // ---- 조각
@@ -585,6 +683,8 @@ class MainActivity : Activity() {
 
     private companion object {
         const val EXTRA_SKIP_MIN = "skipMin"
+        const val REQ_MIC = 2
+        const val EXTRA_SAY = "say"
         const val EXTRA_DEST = "dest"
         const val EXTRA_REMAIN = "remain"
         const val EXTRA_ARRIVE = "arrive"

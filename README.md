@@ -12,6 +12,7 @@
 | 정차 후 | 주차 비교 화면에서 고른 주차장으로 내비 경로 변경 | NaviHelper |
 | P단 진입 | 그 주차장으로 주차 기록 시작. 무료 시간이 15분 남으면 음성·알림 | Vehicle(기어), TextToSpeech |
 | 출차 (P → D/R) | "○○에서 무료 주차 등록하셨나요? 등록하지 않으면 약 18,000원이 나와요" 음성·알림 | Vehicle(기어), TextToSpeech |
+| 언제든 | "말로 묻기"를 누르고 "제일 싼 데 어디야", "다른 데는?", "2번으로", "지금 얼마야", "등록했어"처럼 말하면 답하고 실행 (온디바이스 인식, 외부 전송 없음) | SpeechToText, TextToSpeech |
 | 출차 확인 후 | 주차 기록을 쌓아 이번 달 낸 돈과 **혜택으로 아낀 금액**을 보여 줌 | — |
 
 주행 중(주행 제한 상태)에는 고른 주차장 하나와 짧은 후보 목록만 보여주고, 첫 안내는 음성으로 한다. 정차하면 전체 비교 화면이 열린다.
@@ -35,7 +36,7 @@ adb shell am start -n com.parkdeal.app/.MainActivity
 | 에뮬레이터 빌드 | `release_connect_v2.1.0` |
 | 화면 규격 | 2560×1440, 160dpi |
 | AVD 부팅 옵션 | **cold boot** (quick boot 에서는 VHAL 을 쓸 수 없어 기어를 읽지 못한다) |
-| 앱 권한 | 기어 `pleos.car.permission.CAR_DRIVE`, 내비 `NAVI_ROUTE`·`NAVI_ROUTE_SEARCH`, 음성 `TTS_SERVICE`, 알림 `POST_NOTIFICATIONS` |
+| 앱 권한 | 기어 `pleos.car.permission.CAR_DRIVE`, 내비 `NAVI_ROUTE`·`NAVI_ROUTE_SEARCH`, 음성 `TTS_SERVICE`·`STT_SERVICE`, 마이크 `RECORD_AUDIO`, 알림 `POST_NOTIFICATIONS` |
 | 인터넷 | 있으면 주차 데이터 서버(`parkdeal-api.daeuk.cloud`)에서 최신 값을 받는다. 없으면 마지막으로 받은 값 → 앱에 넣은 데모 목적지 데이터 순으로 동작 |
 
 ### 시연 순서 (에뮬레이터)
@@ -64,7 +65,7 @@ echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties   # Android Studio �
 
 | 모듈 | 내용 |
 |---|---|
-| `app/` | Android 앱 — Pleos SDK(Vehicle·NaviHelper·TextToSpeech), 화면, 포그라운드 서비스 |
+| `app/` | Android 앱 — Pleos SDK(Vehicle·NaviHelper·TextToSpeech·SpeechToText), 화면, 포그라운드 서비스 |
 | `core/` | 순수 Kotlin — 요금 계산, 추천, 주차 세션, 목적지 추적. Android 의존 없이 JVM 에서 테스트 |
 
 설계 결정과 이유: [`docs/architecture.md`](docs/architecture.md)
