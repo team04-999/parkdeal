@@ -61,7 +61,13 @@ class ParkingService : Service() {
     private fun handle(event: ParkingEvent?) {
         when (val e = event) {
             is ParkingEvent.Started -> {
-                Log.d(TAG, "parking started ${e.session.lotName} free=${e.session.freeMin}")
+                Log.d(TAG, "parking started ${e.session.lotName} free=${e.session.freeMin} stop=${e.session.stop}")
+                if (e.session.stop) {
+                    // 정차: 5분 타이머. 좌표가 없는 구간이라 위치 확인은 하지 않는다
+                    voice.speak(ParkingTalk.stopStarted(e.session))
+                    scheduleStop(e.session.startedAt)
+                    return
+                }
                 voice.speak(ParkingTalk.parked(e.session))
                 scheduleWarn()
                 // 추천과 다른 곳에 세웠는지 차 위치로 확인한다
@@ -87,6 +93,17 @@ class ParkingService : Service() {
     }
 
     /** 무료 종료 경고는 타이머 한 번으로 건다 (주기적으로 깨지 않는다). */
+    private val stopOneMin = Runnable { if (tracker.state.session?.stop == true) { val t = ParkingTalk.stopOneMinute(); alert(NOTI_FREE, "정차 1분 남았어요", t); voice.speak(t) } }
+    private val stopOver = Runnable { if (tracker.state.session?.stop == true) { val t = ParkingTalk.stopOver(); alert(NOTI_FREE, "정차 5분이 지났어요", t); voice.speak(t) } }
+
+    /** 정차 4분·5분에 알린다 */
+    private fun scheduleStop(startedAt: Long) {
+        handler.removeCallbacks(stopOneMin); handler.removeCallbacks(stopOver)
+        val now = System.currentTimeMillis()
+        handler.postDelayed(stopOneMin, (startedAt + 4 * 60_000L - now).coerceAtLeast(0))
+        handler.postDelayed(stopOver, (startedAt + 5 * 60_000L - now).coerceAtLeast(0))
+    }
+
     private fun scheduleWarn() {
         handler.removeCallbacks(warnTask)
         val s = tracker.state.session ?: return

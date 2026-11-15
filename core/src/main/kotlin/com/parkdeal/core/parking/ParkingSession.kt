@@ -28,6 +28,10 @@ data class ParkingSession(
     val redeemHint: String? = null,
     /** 고른 주차장과 차 위치가 떨어져 있으면 그 정보. 운전자가 확인하면 지운다. */
     val farFrom: FarFrom? = null,
+    /** 주차할 때 고른 머물 예정 시간(분). 예전 세션에는 없어 null. */
+    val plannedMin: Int? = null,
+    /** 주차장이 아니라 5분 정차 허용 구간에 잠깐 세운 것 (PRD S16) */
+    val stop: Boolean = false,
 ) {
     /** 약 4km/h(분당 67m), 최소 1분. */
     val walkMinutes: Int get() = maxOf(1, (walkMeters + 66) / 67)
@@ -61,6 +65,13 @@ data class ExitReminder(val session: ParkingSession, val endedAt: Long) {
 
 /** 주차 중·출차 때 음성과 알림으로 들려줄 문장. */
 object ParkingTalk {
+    /** 정차 시작 */
+    fun stopStarted(s: ParkingSession): String = "${s.lotName}에 정차했어요. 5분 안에 출발하세요."
+    /** 정차 4분 */
+    fun stopOneMinute(): String = "정차 시간이 1분 남았어요."
+    /** 정차 5분 넘음 */
+    fun stopOver(): String = "정차 5분이 지났어요. 더 머무르려면 주차장으로 옮겨 주세요."
+
     /** P단에 세운 직후: 어디 세웠는지, 혜택을 받으려면 뭘 해야 하는지, 얼마나 걷는지. */
     fun parked(s: ParkingSession): String {
         val deal = when {

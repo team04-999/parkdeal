@@ -182,6 +182,28 @@ class ParkingTrackerTest {
         assertTrue(t.onGear(Gear.DRIVE) is ParkingEvent.Ended)
     }
 
+    @Test fun `머물 예정 시간을 기록하고 혜택 가게를 바꿀 수 있다`() {
+        val t = tracker().apply { this.candidate = this@ParkingTrackerTest.candidate.copy(plannedMin = 120) }
+        t.startNow()
+        assertEquals(120, t.state.session!!.plannedMin)
+        t.switchDeal(com.parkdeal.core.OtherDeal("커스텀커피", "커스텀커피 구매 시 1시간 무료", 1000,
+            com.parkdeal.core.BenefitHow("카운터에 차량번호를 알려 주세요", emptyList(), false), 60))
+        val s = t.state.session!!
+        assertEquals("커스텀커피", s.storeName)
+        assertEquals(60, s.freeMin)
+        assertEquals("카운터에 차량번호를 알려 주세요", s.redeemHint)
+    }
+
+    @Test fun `정차는 D 로 출발하면 출차 확인 없이 끝난다`() {
+        val t = tracker().apply { this.candidate = this@ParkingTrackerTest.candidate.copy(stop = true) }
+        t.onGear(Gear.DRIVE); t.onGear(Gear.PARK)
+        assertTrue(t.state.session!!.stop)
+        now += 3 * min
+        assertNull(t.onGear(Gear.DRIVE))
+        assertNull(t.state.session)
+        assertNull(t.state.reminder)
+    }
+
     private class MemoryStore : StateStore {
         var value: String? = null
         override fun load() = value

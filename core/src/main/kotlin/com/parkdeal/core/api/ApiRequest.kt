@@ -30,6 +30,12 @@ sealed class ApiRequest {
             get() = "destination|${coord(lat)}|${coord(lng)}|${cleanName?.replace(Regex("\\s+"), "") ?: ""}"
     }
 
+    /** 목적지 근처 5분 정차 허용 구간 (서울 일부 구만 데이터가 있다). */
+    data class Stops(val lat: Double, val lng: Double) : ApiRequest() {
+        override val path: String get() = "/v1/stops?lat=${coord(lat)}&lng=${coord(lng)}"
+        override val cacheKey: String get() = "stops|${coord(lat)}|${coord(lng)}"
+    }
+
     /** 주차장([fromLat],[fromLng]) → 목적지 실제 걷는 거리·시간 (서버가 T맵 보행자 경로로 구한다). */
     data class Walk(val fromLat: Double, val fromLng: Double, val toLat: Double, val toLng: Double) : ApiRequest() {
         override val path: String

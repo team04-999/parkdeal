@@ -47,4 +47,10 @@ class ApiRequestTest {
     @Test fun `도보 응답 해석`() {
         assertEquals(WalkResponse(369, 6, "tmap"), ApiJson.walk("""{"distanceM":369,"walkMin":6,"source":"tmap"}"""))
     }
+
+    @Test fun `정차 구간 요청과 응답`() {
+        assertEquals("/v1/stops?lat=37.5329&lng=127.0773", ApiRequest.Stops(37.532855, 127.077288).path)
+        val r = ApiJson.stops("""{"covered":true,"gu":"광진구","road":"뚝섬로","coveredGus":["광진구"],"segments":[{"road":"뚝섬로","desc":"시장 앞","lengthM":70,"sameRoad":true,"allowedNow":true,"today":"09:00~18:00"}]}""")
+        assertEquals("09:00~18:00", r.segments.single().today)
+    }
 }
