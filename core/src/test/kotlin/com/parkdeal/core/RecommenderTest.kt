@@ -97,4 +97,23 @@ class RecommenderTest {
     @Test fun `주차장이 하나도 없으면 빈 추천`() {
         assertTrue(Recommender.recommend(DestinationResponse(), LotsResponse(emptyList()), 60).options.isEmpty())
     }
+
+    @Test fun `전기차가 못 들어가는 주차장은 더 싸도 맨 뒤로 보내고 이유를 단다`() {
+        val cheapNoEv = Lot(id = 1, name = "기계식", kind = "building", lat = 37.5, lng = 127.0, fee = fee(30, 500, 30, 500), distanceM = 50, alerts = listOf("ev"))
+        val normal = lot(2, "일반", 300, fee(30, 3000, 30, 3000))
+        val dest = DestinationResponse(store, emptyList())
+        val r = Recommender.recommend(dest, LotsResponse(listOf(cheapNoEv, normal)), 60, Vehicle(ev = true))
+        assertEquals(listOf("일반", "기계식"), r.options.map { it.name })
+        assertTrue(r.options.last().blocked)
+        assertEquals("전기차 불가", r.options.last().notes.first())
+    }
+
+    @Test fun `혜택 주차장에는 받는 법이 붙는다`() {
+        val b = Benefit(id = 9, type = "all_free_min", condition = "meal", redeem = "plate", freeMin = 120, maxCars = 1,
+            lot = lot(3, "아크플레이스", 10, fee(30, 6000, 60, 6000)))
+        val r = Recommender.recommend(DestinationResponse(store, listOf(b)), LotsResponse(emptyList()), 90)
+        val how = r.options.first().how!!
+        assertEquals("카운터에 차량번호를 알려 주세요", how.redeem)
+        assertEquals(listOf("1대까지"), how.limits)
+    }
 }

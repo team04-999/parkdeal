@@ -20,6 +20,12 @@ data class ParkingOption(
     /** 추천 이유 한 줄. 혜택이 없으면 빈 문자열. */
     val reason: String,
     val rule: FeeRule?,
+    /** 주의 배지(만차 잦음·기계식·발렛 등). 이 차가 못 들어가면 첫 배지가 그 이유. */
+    val notes: List<String> = emptyList(),
+    /** 이 차(전기차 등)는 들어갈 수 없다. 목록 맨 뒤로 간다. */
+    val blocked: Boolean = false,
+    /** 가게 혜택을 실제로 받는 법. 혜택이 없으면 null. */
+    val how: BenefitHow? = null,
 ) {
     /** 약 4km/h(분당 67m), 최소 1분. */
     val walkMinutes: Int get() = maxOf(1, ceil(walkMeters / 67.0).toInt())
@@ -36,24 +42,26 @@ object Recommender {
     private const val WON_PER_WALK_METER = 5
     private const val UNKNOWN_FEE = 1_000_000
 
-    fun recommend(dest: DestinationResponse, lots: LotsResponse, stayMin: Int): Recommendation {
+    fun recommend(dest: DestinationResponse, lots: LotsResponse, stayMin: Int, vehicle: Vehicle = Vehicle.UNKNOWN): Recommendation {
         val storeName = dest.store?.name
         val byLot = LinkedHashMap<Int, ParkingOption>()
 
         // 가게 혜택 주차장을 먼저 넣는다 — 같은 주차장이 주변 목록에도 있으면 혜택 쪽을 남긴다
         for (b in dest.benefits) {
             val lot = b.lot ?: continue
-            val option = option(lot, stayMin, BenefitTerms.of(b, storeName))
+            val option = option(lot, stayMin, BenefitTerms.of(b, storeName), vehicle).copy(how = BenefitHow.of(b))
             val prev = byLot[lot.id]
             if (prev == null || prev.freeMin < option.freeMin) byLot[lot.id] = option
         }
-        for (lot in lots.lots) byLot.putIfAbsent(lot.id, option(lot, stayMin, BenefitTerms.NONE))
+        for (lot in lots.lots) byLot.putIfAbsent(lot.id, option(lot, stayMin, BenefitTerms.NONE, vehicle))
 
-        val sorted = byLot.values.sortedBy { (it.fee ?: UNKNOWN_FEE) + it.walkMeters * WON_PER_WALK_METER }
+        // 이 차가 못 들어가는 곳은 아무리 싸도 맨 뒤
+        val sorted = byLot.values.sortedWith(compareBy({ it.blocked }, { (it.fee ?: UNKNOWN_FEE) + it.walkMeters * WON_PER_WALK_METER }))
         return Recommendation(storeName, stayMin, sorted)
     }
 
-    private fun option(lot: Lot, stayMin: Int, terms: BenefitTerms): ParkingOption {
+    private fun option(lot: Lot, stayMin: Int, terms: BenefitTerms, vehicle: Vehicle): ParkingOption {
+        val notes = LotNotes.of(lot, vehicle)
         val rule = FeeRule.from(lot.fee)
         val fee = when {
             terms.allFree -> 0
@@ -65,6 +73,8 @@ object Recommender {
             // 직선거리 × 1.2 로 도보 거리를 어림한다
             walkMeters = ((lot.distanceM ?: 0) * 1.2).toInt(),
             freeMin = terms.freeMin, reason = terms.reason, rule = rule,
+            notes = listOfNotNull(notes.blockReason) + notes.badges.filter { it != notes.blockReason },
+            blocked = notes.blocked,
         )
     }
 }
