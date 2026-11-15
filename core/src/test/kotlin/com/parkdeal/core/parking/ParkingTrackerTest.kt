@@ -112,6 +112,23 @@ class ParkingTrackerTest {
         assertEquals(t.state, seen.last())
     }
 
+    @Test fun `시연용 시간 건너뛰기는 주차 시작 시각만 앞당긴다`() {
+        val t = tracker().apply { this.candidate = this@ParkingTrackerTest.candidate }
+        assertNull(t.backdate(90)) // 주차 중이 아니면 아무것도 안 한다
+        t.startNow()
+        assertEquals(t0 - 90 * min, t.backdate(90)!!.startedAt)
+        assertEquals(90, t.state.session!!.elapsedMin(now))
+    }
+
+    @Test fun `시간 건너뛰기는 1분에서 하루 사이만 받는다`() {
+        val t = tracker().apply { this.candidate = this@ParkingTrackerTest.candidate }
+        t.startNow()
+        assertNull(t.backdate(0))
+        assertNull(t.backdate(-30))
+        assertNull(t.backdate(24 * 60 + 1))
+        assertEquals(t0, t.state.session!!.startedAt)
+    }
+
     private class MemoryStore : StateStore {
         var value: String? = null
         override fun load() = value

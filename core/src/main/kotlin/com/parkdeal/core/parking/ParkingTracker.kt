@@ -77,6 +77,16 @@ class ParkingTracker(private val store: StateStore, private val clock: () -> Lon
         return s
     }
 
+    /** 시연용: 진행 중 주차의 시작 시각을 [minutes]분 앞당긴다. 영상에서 긴 주차를 몇 초 안에 보여주려고 쓴다. */
+    @Synchronized
+    fun backdate(minutes: Int): ParkingSession? {
+        if (minutes !in 1..MAX_BACKDATE_MIN) return null
+        val s = state.session ?: return null
+        val moved = s.copy(startedAt = s.startedAt - minutes * 60_000L)
+        update(state.copy(session = moved))
+        return moved
+    }
+
     @Synchronized
     fun dismissReminder() = update(state.copy(reminder = null))
 
@@ -97,7 +107,9 @@ class ParkingTracker(private val store: StateStore, private val clock: () -> Lon
     private fun load(): ParkingState =
         store.load()?.let { runCatching { json.decodeFromString(ParkingState.serializer(), it) }.getOrNull() } ?: ParkingState()
 
-    private companion object {
-        val json = Json { ignoreUnknownKeys = true }
+    companion object {
+        /** 시연용 건너뛰기 상한: 하루. */
+        const val MAX_BACKDATE_MIN = 24 * 60
+        private val json = Json { ignoreUnknownKeys = true }
     }
 }

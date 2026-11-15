@@ -14,6 +14,8 @@ data class DemoPlace(val name: String, val lat: Double, val lng: Double) {
 
 object DemoPlaces {
     val all = listOf(
+        // 강남역. 아크플레이스 주차장(30분 6,000원) 2시간 무료 — 혜택으로 아끼는 돈이 크게 보인다
+        DemoPlace("필앤필버거", 37.499734, 127.034964),
         DemoPlace("조이치과", 37.482052, 126.942983),
     )
 }
