@@ -94,6 +94,14 @@ class NaviSource(
         return true
     }
 
+    /** Pleos 내비 화면을 앞으로 띄운다 (목적지는 내비에서 찾는다. 우리 앱엔 키보드 입력이 없다). */
+    fun openNavigation(): Boolean {
+        if (!available) return false
+        runCatching { navi.requestNavigationScreen(ai.pleos.playground.navi.data.NavigationScreenRequest.Foreground) }
+            .onFailure { Log.w(TAG, "내비 화면 열기 실패: ${it.message}"); return false }
+        return true
+    }
+
     fun stop() {
         runCatching { navi.removeListener(listener) }
         runCatching { navi.release() }

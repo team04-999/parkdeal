@@ -337,6 +337,7 @@ class MainActivity : Activity() {
             st.reminder != null -> if (drive) drivingReminder(st.reminder!!) else reminderScreen(st.reminder!!)
             st.session != null -> parkedScreen(st.session!!)
             r != null && r.options.isNotEmpty() -> if (drive) drivingScreen(r) else compareScreen(r)
+            place == null -> waitingScreen()
             else -> emptyScreen()
         }
         content.removeAllViews()
@@ -557,6 +558,75 @@ class MainActivity : Activity() {
     }
 
     /** 목적지 없음(S1) · 불러오는 중 · 정보 없음(S12). 다음에 할 일 하나만 안내한다. */
+    /**
+     * 목적지 없음 (PRD S1). 가운데 제목 + 버튼 하나 + 실제 비교 화면 미리보기(아래로 잘림).
+     * 미리보기는 데모 목적지의 실제 계산 결과를 정적으로 보여준다: "가게 혜택 0원"이 먼저 보이게.
+     */
+    private fun waitingScreen(): View = FrameLayout(this).apply {
+        setBackgroundColor(Ui.CARD)
+        addView(Ui.vbox(this@MainActivity).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, dp(84), 0, 0)
+            addView(Ui.text(this@MainActivity, "목적지 주변 주차 혜택", 57, Ui.TEXT, 900).apply { letterSpacing = -0.02f; gravity = Gravity.CENTER }, lp(WRAP, WRAP))
+            addView(Ui.text(this@MainActivity, "같은 건물 다른 가게 혜택까지 찾아서\n실제로 낼 돈으로 비교해 드려요", 33, Ui.TEXT2).apply {
+                gravity = Gravity.CENTER; setLineSpacing(0f, 1.5f); setPadding(0, dp(20), 0, 0)
+            }, lp(WRAP, WRAP))
+            addView(Ui.button(this@MainActivity, "내비에서 목적지 찾기", true, 102, 33) {
+                if (!navi.openNavigation()) voice.speak("내비에 목적지를 설정해 주세요.")
+            }.apply { background = Ui.rounded(Ui.ACCENT, 999, this@MainActivity) }, lp(dp(520), dp(102)).apply { topMargin = dp(42) })
+            // 미리보기: 아래 테두리 없이 화면 밖으로 잘린다
+            addView(Ui.vbox(this@MainActivity, 15).apply {
+                setPadding(dp(39), dp(36), dp(39), 0)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Ui.BG); val r = dp(42).toFloat()
+                    cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f); setStroke(dp(3), Ui.RAISED)
+                }
+                addView(Ui.hbox(this@MainActivity).apply {
+                    addView(Ui.text(this@MainActivity, "필앤필버거 강남본점", 36, Ui.TEXT, 900))
+                    addView(Ui.grow(this@MainActivity))
+                    addView(Ui.text(this@MainActivity, "1시간 30분 머물면", 24, Ui.MUTED))
+                }, lp(MATCH, WRAP).apply { bottomMargin = dp(9) })
+                addView(previewCard(1, "아크플레이스", null, null, "혜택 적용", "0원", true, "필앤필버거 강남본점", "이용 시 2시간 무료", null), lp(MATCH, WRAP))
+                addView(previewCard(2, "테헤란로 146 주차장", "도보 1분", "1시간 무료 · 이후 10분당 1,000원", "일반 주차 시", "3,000원", false, "화이팅정형외과의원", "이용 시 무료", "혜택 가게 외 2곳 보기 ▸"), lp(MATCH, WRAP))
+            }, lp(dp(860), 0, 1f).apply { topMargin = dp(60) })
+        }, FrameLayout.LayoutParams(MATCH, MATCH))
+    }
+
+    /** 미리보기용 주차장 카드 (PRD lotCard 축소판) */
+    private fun previewCard(n: Int, name: String, walk: String?, rule: String?, feeLabel: String, fee: String, zero: Boolean,
+                            store: String, cond: String, more: String?): View = Ui.vbox(this, 15).apply {
+        setPadding(dp(33), dp(24), dp(33), dp(24))
+        background = Ui.rounded(Ui.CARD, 30, this@MainActivity)
+        addView(Ui.hbox(this@MainActivity, 21).apply {
+            addView(Ui.text(this@MainActivity, "$n", 25, Ui.TEXT, 900).apply {
+                gravity = Gravity.CENTER; background = Ui.rounded(Ui.RAISED, 999, this@MainActivity); layoutParams = lp(dp(54), dp(54))
+            })
+            addView(Ui.vbox(this@MainActivity, 6).apply {
+                addView(Ui.hbox(this@MainActivity, 15).apply {
+                    addView(Ui.text(this@MainActivity, name, 33, Ui.TEXT, 700).apply { maxLines = 1 })
+                    walk?.let { addView(Ui.text(this@MainActivity, it, 22, Ui.TEXT2, 700).apply {
+                        setPadding(dp(12), dp(4), dp(12), dp(4)); background = Ui.rounded(Ui.RAISED, 12, this@MainActivity) }) }
+                })
+                rule?.let { addView(Ui.text(this@MainActivity, it, 22, Ui.MUTED)) }
+            }, lp(0, WRAP, 1f))
+            addView(Ui.vbox(this@MainActivity).apply {
+                gravity = Gravity.END
+                addView(Ui.text(this@MainActivity, feeLabel, 20, Ui.MUTED))
+                addView(Ui.text(this@MainActivity, fee, 39, if (zero) Ui.ACCENT_TEXT else Ui.TEXT, 900))
+            })
+        })
+        addView(Ui.hbox(this@MainActivity).apply {
+            setPadding(dp(24), dp(15), dp(24), dp(15))
+            background = Ui.rounded(Ui.RAISED, 21, this@MainActivity)
+            addView(Ui.vbox(this@MainActivity).apply {
+                addView(Ui.text(this@MainActivity, store, 25, Ui.TEXT, 700))
+                addView(Ui.text(this@MainActivity, cond, 22, Ui.TEXT2))
+            }, lp(0, WRAP, 1f))
+            addView(Ui.text(this@MainActivity, "0원", 36, Ui.ACCENT_TEXT, 900))
+        }, lp(MATCH, WRAP))
+        more?.let { addView(Ui.text(this@MainActivity, it, 22, Ui.ACCENT_TEXT, 700).apply { setPadding(dp(6), 0, 0, 0) }) }
+    }
+
     private fun emptyScreen(): View = Ui.vbox(this, 40).apply {
         setPadding(dp(72), dp(56), dp(72), dp(32))
         addView(Ui.hbox(this@MainActivity, 20).apply {
