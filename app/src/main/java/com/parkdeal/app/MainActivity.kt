@@ -7,12 +7,14 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import com.parkdeal.app.data.AssetSnapshot
 import com.parkdeal.app.data.FileResponseCache
 import com.parkdeal.app.data.HttpUrlTransport
+import com.parkdeal.app.navi.NaviSource
 import com.parkdeal.app.parking.Parking
 import com.parkdeal.app.parking.ParkingService
 import com.parkdeal.app.parking.Voice
@@ -28,7 +30,10 @@ import com.parkdeal.core.Recommendation
 import com.parkdeal.core.Recommender
 import com.parkdeal.core.api.DestinationResponse
 import com.parkdeal.core.api.LotsResponse
+import com.parkdeal.core.api.ApiRequest
 import com.parkdeal.core.api.Origin
+import com.parkdeal.core.navi.DestinationFollower
+import com.parkdeal.core.navi.Place
 import com.parkdeal.core.api.ParkingRepository
 import com.parkdeal.core.durationText
 import com.parkdeal.core.parking.Candidate
@@ -57,7 +62,12 @@ class MainActivity : Activity() {
         override fun run() { render(); main.postDelayed(this, 30_000) }
     }
 
-    private val place = DemoPlaces.all.first()
+    /** 지금 추천을 만드는 목적지. 내비 목적지가 오면 바뀐다. 내비가 없으면 첫 데모 목적지. */
+    private var place: Place = DemoPlaces.all.first().let { Place(it.name, it.lat, it.lng) }
+    private val follower = DestinationFollower()
+    private val navi by lazy { NaviSource(this, ::onNaviDestination) }
+    /** 내비 목적지로 추천을 만들었으면 불러온 뒤 한 번 브리핑한다. */
+    private var briefPending = false
     private var dest: DestinationResponse? = null
     private var lots: LotsResponse? = null
     private var origin: Origin? = null
@@ -83,6 +93,7 @@ class MainActivity : Activity() {
         }
         voice // TTS 엔진을 미리 띄워 첫 안내가 늦지 않게
         load()
+        navi.start()
         demo(intent)
     }
 
@@ -96,10 +107,44 @@ class MainActivity : Activity() {
      * 이 액티비티는 런처라 외부에 열려 있으므로 debug 빌드에서만 받고, 한 번 쓰면 지운다.
      */
     private fun demo(intent: Intent?) {
-        if (!BuildConfig.DEBUG || intent == null || !intent.hasExtra(EXTRA_SKIP_MIN)) return
-        val skip = intent.getIntExtra(EXTRA_SKIP_MIN, 0)
-        intent.removeExtra(EXTRA_SKIP_MIN)
-        tracker.backdate(skip)
+        if (!BuildConfig.DEBUG || intent == null) return
+        if (intent.hasExtra(EXTRA_SKIP_MIN)) {
+            val skip = intent.getIntExtra(EXTRA_SKIP_MIN, 0)
+            intent.removeExtra(EXTRA_SKIP_MIN)
+            tracker.backdate(skip)
+        }
+        // `--es dest 필앤필버거`: 데모 목적지로 내비 경로를 건다 (내비에서 목적지를 검색하는 대신)
+        intent.getStringExtra(EXTRA_DEST)?.let { name ->
+            intent.removeExtra(EXTRA_DEST)
+            DemoPlaces.all.firstOrNull { it.name == name }?.let { navi.route(Place(it.name, it.lat, it.lng)) }
+        }
+    }
+
+    /** 내비 목적지가 바뀌면 그 목적지로 추천을 다시 만들고, 불러오면 음성으로 브리핑한다. */
+    private fun onNaviDestination(p: Place, remainMeters: Int) {
+        val next = follower.onDestination(p) ?: return
+        Log.d(TAG, "navi destination ${next.name} remain=${remainMeters}m")
+        place = next
+        index = 0
+        dest = null; lots = null; recommendation = null; failed = false
+        briefPending = true
+        render()
+        load()
+    }
+
+    /** 고른 주차장으로 내비 경로를 바꾼다. 목적지(가게)는 그대로 두고 추천도 유지한다. */
+    private fun guide(o: ParkingOption) {
+        val lat = o.lat; val lng = o.lng
+        if (lat == null || lng == null) return
+        follower.guidingTo(o.name)
+        if (navi.route(Place(o.name, lat, lng))) {
+            voice.speak("${o.name}(으)로 안내할게요.".replace("(으)로", if (endsWithBatchim(o.name)) "으로" else "로"))
+        }
+    }
+
+    private fun endsWithBatchim(word: String): Boolean {
+        val c = word.lastOrNull { !it.isWhitespace() } ?: return false
+        return c in '가'..'힣' && (c - '가') % 28 != 0 && (c - '가') % 28 != 8 // ㄹ 받침은 "로"
     }
 
     override fun onStart() {
@@ -118,22 +163,26 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         io.shutdownNow()
+        navi.stop()
         voice.close()
         super.onDestroy()
     }
 
     private fun load() {
+        val p = place
         io.execute {
-            val d = repository.destination(place.destinationRequest)
-            val l = repository.lots(place.lotsRequest)
+            val d = repository.destination(ApiRequest.Destination(p.lat, p.lng, p.name))
+            val l = repository.lots(ApiRequest.Lots(p.lat, p.lng))
             main.post {
-                if (isDestroyed) return@post
+                if (isDestroyed || p != place) return@post // 그사이 목적지가 바뀌었다
                 failed = d == null
                 dest = d?.value
                 lots = l?.value
                 origin = d?.origin ?: l?.origin
                 stayMin = d?.value?.store?.stayMin ?: 60
                 recompute()
+                val r = recommendation
+                if (briefPending && r != null) { briefPending = false; voice.speak(Briefing.sentence(r, stayMin)) }
             }
         }
     }
@@ -202,8 +251,13 @@ class MainActivity : Activity() {
                 addView(Ui.grow(this@MainActivity))
                 addView(Ui.text(this@MainActivity, "P단에 넣으면 ${index + 1}번 주차장으로 주차 시간을 챙겨 드려요", 24, Ui.ACCENT_TEXT, 700))
                 addView(Ui.hbox(this@MainActivity, 20).apply {
-                    addView(Ui.button(this@MainActivity, "${index + 1}번에 주차 시작", true, 104, 34) { tracker.startNow() }, lp(0, dp(104), 2f))
-                    addView(Ui.button(this@MainActivity, "추천 듣기", false, 104, 32) { voice.speak(Briefing.sentence(r, stayMin)) }, lp(0, dp(104), 1f))
+                    val o = opts[index]
+                    val guided = follower.guiding == o.name
+                    addView(Ui.button(this@MainActivity, if (guided) "${index + 1}번으로 안내 중" else "${index + 1}번으로 안내", true, 104, 34) {
+                        guide(o); render()
+                    }, lp(0, dp(104), 2f))
+                    addView(Ui.button(this@MainActivity, "추천 듣기", false, 104, 30) { voice.speak(Briefing.sentence(r, stayMin)) }, lp(0, dp(104), 1f))
+                    addView(Ui.button(this@MainActivity, "주차 시작", false, 104, 30) { tracker.startNow() }, lp(0, dp(104), 1f))
                 })
             }, lp(0, MATCH, 1f))
         }, lp(MATCH, 0, 1f))
@@ -355,5 +409,7 @@ class MainActivity : Activity() {
 
     private companion object {
         const val EXTRA_SKIP_MIN = "skipMin"
+        const val EXTRA_DEST = "dest"
+        const val TAG = "ParkDeal"
     }
 }
