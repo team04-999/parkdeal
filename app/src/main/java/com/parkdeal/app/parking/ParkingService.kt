@@ -64,6 +64,14 @@ class ParkingService : Service() {
                 Log.d(TAG, "parking started ${e.session.lotName} free=${e.session.freeMin}")
                 voice.speak(ParkingTalk.parked(e.session))
                 scheduleWarn()
+                // 추천과 다른 곳에 세웠는지 차 위치로 확인한다
+                CarLocation.once(this) { lat, lng ->
+                    val far = tracker.checkPlace(lat, lng) ?: return@once
+                    val text = "${e.session.lotName}에서 ${far.distanceM}m 떨어진 곳이에요. 다른 곳에 세우셨으면 화면에서 골라 주세요."
+                    Log.d(TAG, "place check: $text")
+                    alert(NOTI_PLACE, "어디에 세우셨나요?", text)
+                    handler.postDelayed({ voice.speak(text) }, PLACE_SPEAK_DELAY_MS)
+                }
             }
             is ParkingEvent.Ended -> {
                 handler.removeCallbacks(warnTask)
@@ -147,6 +155,9 @@ class ParkingService : Service() {
         private const val NOTI_ONGOING = 1
         private const val NOTI_EXIT = 10
         private const val NOTI_FREE = 11
+        private const val NOTI_PLACE = 12
+        /** 주차 직후 안내가 끝난 뒤에 말한다 */
+        private const val PLACE_SPEAK_DELAY_MS = 7_000L
         private const val STOP_AFTER_EXIT_MS = 15_000L
 
         private fun needed(t: ParkingTracker) = t.candidate != null || t.state.session != null

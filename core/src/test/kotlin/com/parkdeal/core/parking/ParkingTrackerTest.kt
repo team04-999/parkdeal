@@ -164,6 +164,24 @@ class ParkingTrackerTest {
         assertTrue(t.settle() is ParkingEvent.Ended)
     }
 
+    @Test fun `주차 중 R 로 바꿨다가 다시 P 면 자리를 고친 것 - 출차가 아니다`() {
+        val t = tracker().apply { this.candidate = this@ParkingTrackerTest.candidate }
+        t.onGear(Gear.DRIVE); t.onGear(Gear.PARK)
+        now += 40 * min
+        assertNull(t.onGear(Gear.REVERSE))
+        assertNull(t.onGear(Gear.PARK))
+        assertEquals(t0, t.state.session!!.startedAt) // 주차 시각 그대로
+        assertNull(t.state.reminder)
+    }
+
+    @Test fun `주차 중 R 로 빼서 D 로 가면 출차`() {
+        val t = tracker().apply { this.candidate = this@ParkingTrackerTest.candidate }
+        t.onGear(Gear.DRIVE); t.onGear(Gear.PARK)
+        now += 40 * min
+        assertNull(t.onGear(Gear.REVERSE))
+        assertTrue(t.onGear(Gear.DRIVE) is ParkingEvent.Ended)
+    }
+
     private class MemoryStore : StateStore {
         var value: String? = null
         override fun load() = value

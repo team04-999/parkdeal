@@ -60,7 +60,7 @@ sealed interface ParkingEvent {
  * 기어 전환으로 주차를 시작하고 끝낸다.
  *  - 처음 받은 기어는 기준으로만 쓴다. 앱을 켰을 때 이미 P 였던 것을 주차 시작으로 보지 않는다
  *  - P 로 바뀌면 [candidate] 주차장으로 주차 시작
- *  - 주차 중 D·R 로 바뀌면 출차 (P → N → D 도 출차)
+ *  - 주차 중 D 로 바뀌면 출차 (P → R → D, P → N → D 도 출차). R → P 는 자리를 고친 것이라 출차가 아니다
  * 상태는 바뀔 때마다 [store] 에 저장해 프로세스가 다시 만들어져도 이어진다.
  */
 class ParkingTracker(
@@ -89,7 +89,8 @@ class ParkingTracker(
         if (prev == gear) return null
         return when {
             gear == Gear.PARK && prev != null -> startNow()?.let { ParkingEvent.Started(it) }
-            gear == Gear.DRIVE || gear == Gear.REVERSE -> end()?.let { ParkingEvent.Ended(it) }
+            // R 만으로는 출차로 보지 않는다: 자리를 고치려고 R → P 하는 경우가 있다. 출차는 D 에서 확정한다
+            gear == Gear.DRIVE -> end()?.let { ParkingEvent.Ended(it) }
             else -> null
         }
     }
@@ -101,7 +102,7 @@ class ParkingTracker(
     @Synchronized
     fun settle(): ParkingEvent? {
         val g = lastGear ?: return null
-        if (g != Gear.DRIVE && g != Gear.REVERSE) return null
+        if (g != Gear.DRIVE) return null
         return end()?.let { ParkingEvent.Ended(it) }
     }
 
@@ -118,6 +119,36 @@ class ParkingTracker(
         )
         update(state.copy(session = s, reminder = null))
         return s
+    }
+
+    /** P 직후 차 위치로 확인한다. 고른 주차장에서 멀면 표시하고 그 정보를 돌려준다. */
+    @Synchronized
+    fun checkPlace(carLat: Double, carLng: Double): FarFrom? {
+        val s = state.session ?: return null
+        val d = ParkCheck.distance(s, carLat, carLng) ?: return null
+        if (d <= ParkCheck.SAME_PLACE_M) return null
+        val far = FarFrom(d, carLat, carLng)
+        update(state.copy(session = s.copy(farFrom = far)))
+        return far
+    }
+
+    /** 운전자가 고른 실제 주차장으로 고친다. 주차 시각은 그대로, 요금·혜택은 새 주차장 기준. */
+    @Synchronized
+    fun relocate(c: Candidate) {
+        val s = state.session ?: return
+        val o = c.option
+        update(state.copy(session = s.copy(
+            lotId = o.lotId, lotName = o.name, lat = o.lat, lng = o.lng, rule = o.rule, freeMin = o.freeMin,
+            storeName = c.storeName.takeIf { o.freeMin > 0 }, reason = o.reason, walkMeters = o.walkMeters,
+            redeemHint = o.how?.redeem.takeIf { o.freeMin > 0 }, farFrom = null,
+        )))
+    }
+
+    /** "여기 맞아요": 떨어져 있다는 표시만 지운다. */
+    @Synchronized
+    fun confirmPlace() {
+        val s = state.session ?: return
+        update(state.copy(session = s.copy(farFrom = null)))
     }
 
     /** 시연용: 진행 중 주차의 시작 시각을 [minutes]분 앞당긴다. 영상에서 긴 주차를 몇 초 안에 보여주려고 쓴다. */

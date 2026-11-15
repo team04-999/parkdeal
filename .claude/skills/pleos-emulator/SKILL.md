@@ -43,6 +43,13 @@ description: Use when running, testing, or demoing the app on the Pleos Connect 
 | 운전석 탑승 | `seat.occupied.driver` | `seat area=driver kind=occupied value=false` |
 | 속도·페달 | `controls.speed_kph`, `controls.brake_pct` | **PUT** `/vehicle/controls?speed=0&accelerator=0&brake=0&steering=0` (`gear.sh Park` 가 먼저 한다) |
 
+## 차 위치 (FusedLocation)
+
+빡딜은 P단에 넣는 순간 차 위치와 고른 주차장을 비교해 150m 넘게 떨어지면 "어디에 세우셨나요?"를 묻는다.
+에뮬레이터 위치는 `adb emu geo fix <경도> <위도>` 로 바꾼다(경도가 먼저). 시연 전에 **고른 주차장 좌표로 옮겨 둔다**.
+예: 아크플레이스 `adb emu geo fix 127.0350 37.4998`. 내비는 이 값을 쓰지 않고 위치가 고정돼 있다(NMEA 체크섬 오류로 버림).
+권한 `pleos.car.permission.FUSED_LOCATION` 은 dangerous 라 처음 실행 때 허락해야 한다(`pm grant --user <u> com.parkdeal.app pleos.car.permission.FUSED_LOCATION`).
+
 ## 주행 중 확인
 
 ParkDeal 은 `distractionOptimized` 를 선언한다. 주행 제한 중에는 줄인 화면(고른 곳 + 짧은 목록)이 보여야 한다.
