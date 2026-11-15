@@ -22,7 +22,7 @@ class ParkingLogTest {
     private val option = ParkingOption(1, "아크플레이스", 37.5, 127.03, 0, 6, 120, "필앤필버거 강남본점 이용 시 2시간 무료",
         FeeRule.Metered(30, 6000, 60, 6000, 60000))
 
-    private fun parkFor(minutes: Int, t: ParkingTracker = ParkingTracker(store) { now }): ParkingTracker {
+    private fun parkFor(minutes: Int, t: ParkingTracker = ParkingTracker(store, settleMs = 0, minSessionMs = 0) { now }): ParkingTracker {
         t.candidate = Candidate(option, "필앤필버거 강남본점", "필앤필버거")
         t.onGear(Gear.DRIVE)
         t.onGear(Gear.PARK) // 주차 시작
@@ -50,7 +50,7 @@ class ParkingLogTest {
     }
 
     @Test fun `요금 규칙을 모르는 주차는 금액 없이 기록한다`() {
-        val t = ParkingTracker(store) { now }
+        val t = ParkingTracker(store, settleMs = 0, minSessionMs = 0) { now }
         t.candidate = Candidate(option.copy(rule = null, freeMin = 0), null, "어딘가")
         t.startNow(); now += 30 * min; t.onGear(Gear.DRIVE)
         t.dismissReminder(registered = false)
@@ -71,7 +71,7 @@ class ParkingLogTest {
     }
 
     @Test fun `기록은 최근 100건까지만 남긴다`() {
-        val t = ParkingTracker(store) { now }
+        val t = ParkingTracker(store, settleMs = 0, minSessionMs = 0) { now }
         repeat(105) { parkFor(10, t).dismissReminder(registered = true) }
         assertEquals(100, t.state.history.size)
     }

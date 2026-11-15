@@ -63,8 +63,12 @@ class MainActivity : Activity() {
         override fun run() { render(); main.postDelayed(this, 30_000) }
     }
 
-    /** 지금 추천을 만드는 목적지. 내비 목적지가 오면 바뀐다. 내비가 없으면 첫 데모 목적지. */
-    private var place: Place = DemoPlaces.all.first().let { Place(it.name, it.lat, it.lng) }
+    /** 지금 추천을 만드는 목적지. 내비에 목적지를 넣으면 정해진다. 없으면 목적지를 기다리는 화면. */
+    private var place: Place? = null
+    /** 지금 화면에 보이는 추천의 목적지. 새 목적지를 불러오는 동안에는 [place] 와 다르다(이전 화면을 유지). */
+    private var shownPlace: Place? = null
+    /** 내비가 안내 중인 목적지가 있는지. 있으면 주차장은 경유지로 넣는다. */
+    private var naviRoute = false
     private val follower = DestinationFollower()
     private val navi by lazy { NaviSource(this, ::onNaviDestination) }
     /** 내비 목적지로 추천을 만들었으면 불러온 뒤 한 번 브리핑한다. */
@@ -93,7 +97,6 @@ class MainActivity : Activity() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
         voice // TTS 엔진을 미리 띄워 첫 안내가 늦지 않게
-        load()
         navi.start()
         demo(intent)
     }
@@ -123,12 +126,13 @@ class MainActivity : Activity() {
 
     /** 내비 목적지가 바뀌면 그 목적지로 추천을 다시 만들고, 불러오면 음성으로 브리핑한다. */
     private fun onNaviDestination(p: Place, remainMeters: Int) {
+        naviRoute = true
         val next = follower.onDestination(p) ?: return
         Log.d(TAG, "navi destination ${next.name} remain=${remainMeters}m")
         place = next
-        index = 0
-        dest = null; lots = null; recommendation = null; failed = false
+        failed = false
         briefPending = true
+        // 이전 추천은 새 응답이 올 때까지 그대로 둔다 (화면이 "불러오는 중"으로 번쩍이지 않게)
         render()
         load()
     }
@@ -138,8 +142,8 @@ class MainActivity : Activity() {
         val lat = o.lat; val lng = o.lng
         if (lat == null || lng == null) return
         follower.guidingTo(o.name)
-        if (navi.route(Place(o.name, lat, lng))) {
-            voice.speak("${o.name}(으)로 안내할게요.".replace("(으)로", if (endsWithBatchim(o.name)) "으로" else "로"))
+        if (navi.via(Place(o.name, lat, lng), hasRoute = naviRoute)) {
+            voice.speak("${o.name}${if (endsWithBatchim(o.name)) "을" else "를"} 경유지로 넣었어요.")
         }
     }
 
@@ -170,17 +174,20 @@ class MainActivity : Activity() {
     }
 
     private fun load() {
-        val p = place
+        val p = place ?: return render()
         io.execute {
             val d = repository.destination(ApiRequest.Destination(p.lat, p.lng, p.name))
             val l = repository.lots(ApiRequest.Lots(p.lat, p.lng))
             main.post {
                 if (isDestroyed || p != place) return@post // 그사이 목적지가 바뀌었다
                 failed = d == null
-                dest = d?.value
+                if (d == null) { dest = null; lots = null; recommendation = null; shownPlace = p; return@post render() }
+                dest = d.value
                 lots = l?.value
-                origin = d?.origin ?: l?.origin
-                stayMin = d?.value?.store?.stayMin ?: 60
+                origin = d.origin
+                stayMin = d.value.store?.stayMin ?: 60
+                index = 0
+                shownPlace = p
                 recompute()
                 val r = recommendation
                 if (briefPending && r != null) { briefPending = false; voice.speak(Briefing.sentence(r, stayMin)) }
@@ -196,13 +203,14 @@ class MainActivity : Activity() {
     }
 
     private fun selected(): ParkingOption? = recommendation?.options?.getOrNull(index)
+    private fun shownName() = shownPlace?.name ?: "목적지"
 
     /** 지금 고른 주차장을 "P 단에 넣으면 주차할 곳"으로 정한다. 주차 중·리마인드 중에는 건드리지 않는다. */
     private fun syncCandidate() {
         val st = tracker.state
         val o = selected() ?: return
         if (st.session != null || st.reminder != null) return
-        tracker.candidate = Candidate(o, recommendation?.storeName, place.name)
+        tracker.candidate = Candidate(o, recommendation?.storeName, shownName())
         ParkingService.ensure(this)
     }
 
@@ -227,7 +235,10 @@ class MainActivity : Activity() {
         setPadding(dp(56), dp(44), dp(56), dp(28))
         addView(Ui.hbox(this@MainActivity).apply {
             addView(Ui.vbox(this@MainActivity, 6).apply {
-                addView(Ui.text(this@MainActivity, "${place.name} 주변 · 800m 이내", 26, Ui.MUTED))
+                val loading = place != null && place != shownPlace
+                addView(Ui.text(this@MainActivity,
+                    if (loading) "${place?.name} 주변을 찾는 중…" else "${shownName()} 주변 · 800m 이내",
+                    26, if (loading) Ui.ACCENT_TEXT else Ui.MUTED))
                 addView(Ui.text(this@MainActivity, "주차 비교", 48, Ui.TEXT, 900))
             })
             addView(Ui.grow(this@MainActivity))
@@ -245,7 +256,7 @@ class MainActivity : Activity() {
         addView(Ui.hbox(this@MainActivity, 32).apply {
             gravity = Gravity.TOP
             addView(MiniMapView(this@MainActivity).apply {
-                destLat = place.lat; destLng = place.lng; options = opts; selected = index
+                destLat = shownPlace?.lat ?: 0.0; destLng = shownPlace?.lng ?: 0.0; options = opts; selected = index
             }, lp(dp(640), MATCH))
             addView(Ui.vbox(this@MainActivity, 14).apply {
                 opts.forEachIndexed { i, o -> addView(optionRow(i, o, i == index), lp(MATCH, WRAP)) }
@@ -254,7 +265,7 @@ class MainActivity : Activity() {
                 addView(Ui.hbox(this@MainActivity, 20).apply {
                     val o = opts[index]
                     val guided = follower.guiding == o.name
-                    addView(Ui.button(this@MainActivity, if (guided) "${index + 1}번으로 안내 중" else "${index + 1}번으로 안내", true, 104, 34) {
+                    addView(Ui.button(this@MainActivity, if (guided) "${index + 1}번 경유 중" else "${index + 1}번 경유지로", true, 104, 34) {
                         guide(o); render()
                     }, lp(0, dp(104), 2f))
                     addView(Ui.button(this@MainActivity, "추천 듣기", false, 104, 30) { voice.speak(Briefing.sentence(r, stayMin)) }, lp(0, dp(104), 1f))
@@ -286,9 +297,16 @@ class MainActivity : Activity() {
         addView(Ui.vbox(this@MainActivity, 28).apply {
             setPadding(dp(64), dp(56), dp(64), dp(56))
             background = Ui.rounded(Ui.CARD, 40, this@MainActivity, Ui.ACCENT, 2)
-            addView(Ui.text(this@MainActivity, "주차 중 · ${s.destName}", 28, Ui.ACCENT_TEXT, 700))
-            addView(Ui.text(this@MainActivity, s.lotName, 64, Ui.TEXT, 900).apply { maxLines = 2 })
+            val justParked = s.elapsedMin(now) < 10
+            addView(Ui.text(this@MainActivity, if (justParked) "${s.lotName}에 세웠어요" else "주차 중 · ${s.destName}", 28, Ui.ACCENT_TEXT, 700))
+            if (justParked && s.hasBenefit) {
+                // 세운 직후 할 일 하나: 혜택 가게 이용하고 등록하기 (PRD S7)
+                addView(Ui.text(this@MainActivity, "${s.storeName}\n이용하고 주차 등록하세요", 56, Ui.TEXT, 900).apply { setLineSpacing(0f, 1.15f) })
+            } else {
+                addView(Ui.text(this@MainActivity, s.lotName, 64, Ui.TEXT, 900).apply { maxLines = 2 })
+            }
             if (s.reason.isNotEmpty()) addView(pill(s.reason, 28, Ui.GREEN, Ui.GREEN_BG), lp(WRAP, WRAP))
+            if (justParked) addView(Ui.text(this@MainActivity, "${s.destName}까지 걸어서 ${s.walkMinutes}분", 30, Ui.TEXT2, 700))
             addView(Ui.hbox(this@MainActivity, 20).apply {
                 addView(stat("주차한 시간", durationText(s.elapsedMin(now)), Ui.TEXT), lp(0, WRAP, 1f))
                 addView(stat("남은 무료 시간",
@@ -379,20 +397,38 @@ class MainActivity : Activity() {
         }
     }
 
+    /** 목적지 없음(S1) · 불러오는 중 · 정보 없음(S12). 다음에 할 일 하나만 안내한다. */
     private fun emptyScreen(): View = Ui.vbox(this, 40).apply {
         setPadding(dp(72), dp(56), dp(72), dp(32))
         addView(Ui.hbox(this@MainActivity, 20).apply {
             addView(logo(56)); addView(Ui.text(this@MainActivity, "빡딜", 32, Ui.TEXT, 900))
         })
+        val p = place
+        val noLots = recommendation?.options?.isEmpty() == true
         addView(Ui.vbox(this@MainActivity, 24).apply {
             setPadding(dp(72), dp(64), dp(72), dp(64))
             background = Ui.rounded(Ui.CARD, 40, this@MainActivity)
-            if (failed) {
-                addView(Ui.text(this@MainActivity, "주차 정보를 불러오지 못했어요", 56, Ui.TEXT, 900))
-                addView(Ui.button(this@MainActivity, "다시 시도", true, 104, 34) { failed = false; render(); load() }, lp(dp(360), dp(104)))
-            } else {
-                addView(Ui.text(this@MainActivity, place.name, 28, Ui.ACCENT_TEXT, 700))
-                addView(Ui.text(this@MainActivity, "주변 주차를\n비교하고 있어요", 64, Ui.TEXT, 900).apply { setLineSpacing(0f, 1.15f) })
+            when {
+                p == null -> {
+                    addView(Ui.text(this@MainActivity, "목적지 주변 주차 혜택", 28, Ui.ACCENT_TEXT, 700))
+                    addView(Ui.text(this@MainActivity, "내비에 목적지를 설정하면\n주변 주차를 비교해 드려요", 60, Ui.TEXT, 900).apply { setLineSpacing(0f, 1.15f) })
+                    addView(Ui.text(this@MainActivity, "같은 건물 가게 혜택까지 찾아서 실제로 낼 돈으로 비교해요", 28, Ui.MUTED))
+                }
+                failed -> {
+                    addView(Ui.text(this@MainActivity, p.name, 28, Ui.ACCENT_TEXT, 700))
+                    addView(Ui.text(this@MainActivity, "주차 정보를 받지 못했어요", 56, Ui.TEXT, 900))
+                    addView(Ui.text(this@MainActivity, "인터넷 연결을 확인하고 다시 시도해 주세요. 아직 정보가 없는 지역일 수도 있어요.", 28, Ui.MUTED))
+                    addView(Ui.button(this@MainActivity, "다시 시도", true, 104, 34) { failed = false; render(); load() }, lp(dp(360), dp(104)))
+                }
+                noLots -> {
+                    addView(Ui.text(this@MainActivity, p.name, 28, Ui.ACCENT_TEXT, 700))
+                    addView(Ui.text(this@MainActivity, "800m 안에 아는 주차장이 없어요", 56, Ui.TEXT, 900))
+                    addView(Ui.text(this@MainActivity, "지금은 서울 지하철 2호선 역 주변 정보만 있어요.", 28, Ui.MUTED))
+                }
+                else -> {
+                    addView(Ui.text(this@MainActivity, p.name, 28, Ui.ACCENT_TEXT, 700))
+                    addView(Ui.text(this@MainActivity, "주변 주차를\n비교하고 있어요", 64, Ui.TEXT, 900).apply { setLineSpacing(0f, 1.15f) })
+                }
             }
         }, lp(MATCH, WRAP))
     }

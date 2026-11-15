@@ -63,7 +63,14 @@ sealed interface ParkingEvent {
  *  - 주차 중 D·R 로 바뀌면 출차 (P → N → D 도 출차)
  * 상태는 바뀔 때마다 [store] 에 저장해 프로세스가 다시 만들어져도 이어진다.
  */
-class ParkingTracker(private val store: StateStore, private val clock: () -> Long) {
+class ParkingTracker(
+    private val store: StateStore,
+    /** 첫 기어 값을 받은 뒤 이 시간 동안 들어온 값은 기준으로만 쓴다 (리스너 등록 직후 이전 값이 섞여 온다). */
+    private val settleMs: Long = SETTLE_MS,
+    /** 이보다 짧게 끝난 주차는 잘못 감지한 것으로 보고 리마인드 없이 버린다. */
+    private val minSessionMs: Long = MIN_SESSION_MS,
+    private val clock: () -> Long,
+) {
     var state: ParkingState = load()
         private set
 
@@ -71,17 +78,31 @@ class ParkingTracker(private val store: StateStore, private val clock: () -> Lon
     /** 상태가 바뀐 뒤 불린다. 화면 갱신용. */
     @Volatile var onChange: ((ParkingState) -> Unit)? = null
     private var lastGear: Gear? = null
+    private var firstGearAt: Long? = null
 
     @Synchronized
     fun onGear(gear: Gear): ParkingEvent? {
         val prev = lastGear
         lastGear = gear
+        val first = firstGearAt ?: clock().also { firstGearAt = it }
+        if (clock() - first < settleMs) return null // 아직 기준을 잡는 중
         if (prev == gear) return null
         return when {
             gear == Gear.PARK && prev != null -> startNow()?.let { ParkingEvent.Started(it) }
             gear == Gear.DRIVE || gear == Gear.REVERSE -> end()?.let { ParkingEvent.Ended(it) }
             else -> null
         }
+    }
+
+    /**
+     * 기준 잡기가 끝난 뒤 한 번 부른다. 주차 중으로 저장돼 있는데 기준 기어가 D·R 이면
+     * 앱이 꺼진 사이 출발한 것이므로 출차로 처리한다.
+     */
+    @Synchronized
+    fun settle(): ParkingEvent? {
+        val g = lastGear ?: return null
+        if (g != Gear.DRIVE && g != Gear.REVERSE) return null
+        return end()?.let { ParkingEvent.Ended(it) }
     }
 
     /** P 단 없이 직접 시작 (기어를 읽을 수 없는 차, 또는 화면의 "주차 시작" 버튼). */
@@ -93,6 +114,7 @@ class ParkingTracker(private val store: StateStore, private val clock: () -> Lon
         val s = ParkingSession(
             startedAt = clock(), lotId = o.lotId, lotName = o.name, lat = o.lat, lng = o.lng, rule = o.rule,
             freeMin = o.freeMin, storeName = c.storeName.takeIf { o.freeMin > 0 }, reason = o.reason, destName = c.destName,
+            walkMeters = o.walkMeters,
         )
         update(state.copy(session = s, reminder = null))
         return s
@@ -125,6 +147,11 @@ class ParkingTracker(private val store: StateStore, private val clock: () -> Lon
 
     private fun end(): ExitReminder? {
         val s = state.session ?: return null
+        if (clock() - s.startedAt < minSessionMs) {
+            // 기어가 잠깐 흔들린 것. 주차 기록도 리마인드도 남기지 않는다
+            update(state.copy(session = null))
+            return null
+        }
         val r = ExitReminder(s, clock())
         candidate = null
         update(state.copy(session = null, reminder = r))
@@ -144,6 +171,8 @@ class ParkingTracker(private val store: StateStore, private val clock: () -> Lon
         /** 시연용 건너뛰기 상한: 하루. */
         const val MAX_BACKDATE_MIN = 24 * 60
         const val MAX_HISTORY = 100
+        const val SETTLE_MS = 2_000L
+        const val MIN_SESSION_MS = 10_000L
         private val json = Json { ignoreUnknownKeys = true }
     }
 }
