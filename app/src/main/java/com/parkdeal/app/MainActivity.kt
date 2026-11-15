@@ -33,7 +33,9 @@ import com.parkdeal.core.api.DestinationResponse
 import com.parkdeal.core.api.LotsResponse
 import com.parkdeal.core.api.ApiRequest
 import com.parkdeal.core.api.Origin
+import com.parkdeal.core.navi.ApproachTrigger
 import com.parkdeal.core.navi.DestinationFollower
+import com.parkdeal.core.navi.NaviTalk
 import com.parkdeal.core.navi.Place
 import com.parkdeal.core.api.ParkingRepository
 import com.parkdeal.core.durationText
@@ -71,7 +73,8 @@ class MainActivity : Activity() {
     /** 내비가 안내 중인 목적지가 있는지. 있으면 주차장은 경유지로 넣는다. */
     private var naviRoute = false
     private val follower = DestinationFollower()
-    private val navi by lazy { NaviSource(this, ::onNaviDestination) }
+    private val navi by lazy { NaviSource(this, ::onNaviDestination, ::onRemain, ::onWaypointArrived) }
+    private val approach = ApproachTrigger()
     private val driving by lazy { DrivingRestriction(this) { render() } }
     /** 내비 목적지로 추천을 만들었으면 불러온 뒤 한 번 브리핑한다. */
     private var briefPending = false
@@ -120,6 +123,14 @@ class MainActivity : Activity() {
             intent.removeExtra(EXTRA_SKIP_MIN)
             tracker.backdate(skip)
         }
+        // 에뮬레이터 내비는 위치가 움직이지 않아 아래 두 이벤트가 오지 않는다. 같은 처리 경로를 직접 부른다
+        // `--ei remain 800`: 목적지까지 800m 남음 / `--es arrive 아크플레이스`: 경유지 도착
+        if (intent.hasExtra(EXTRA_REMAIN)) {
+            val m = intent.getIntExtra(EXTRA_REMAIN, 0)
+            intent.removeExtra(EXTRA_REMAIN)
+            shownPlace?.let { onRemain(it.name, m) }
+        }
+        intent.getStringExtra(EXTRA_ARRIVE)?.let { intent.removeExtra(EXTRA_ARRIVE); onWaypointArrived(it) }
         // `--es dest 필앤필버거`: 데모 목적지로 내비 경로를 건다 (내비에서 목적지를 검색하는 대신)
         intent.getStringExtra(EXTRA_DEST)?.let { name ->
             intent.removeExtra(EXTRA_DEST)
@@ -140,12 +151,32 @@ class MainActivity : Activity() {
         load()
     }
 
+    /** 지금 안내하는 주차장: 경유지로 넣은 곳, 없으면 고른 곳. */
+    private fun target(): ParkingOption? {
+        val opts = recommendation?.options ?: return null
+        return opts.firstOrNull { it.name == follower.guiding } ?: opts.getOrNull(index)
+    }
+
+    /** 목적지 1km 안: 출발 때 들은 브리핑을 잊었을 때쯤 고른 곳을 한 번 더 말한다. */
+    private fun onRemain(destName: String, meters: Int) {
+        if (destName != shownPlace?.name) return
+        val t = target() ?: return
+        if (approach.onRemain(destName, meters)) voice.speak(NaviTalk.approaching(t))
+    }
+
+    /** 경유지 도착(PRD S6): 자리가 없을 때 갈 다음 후보까지 말한다. */
+    private fun onWaypointArrived(name: String) {
+        val opts = recommendation?.options ?: return
+        val next = opts.firstOrNull { it.name != name }
+        voice.speak(NaviTalk.waypointArrived(name, next))
+    }
+
     /** 고른 주차장으로 내비 경로를 바꾼다. 목적지(가게)는 그대로 두고 추천도 유지한다. */
-    private fun guide(o: ParkingOption) {
+    private fun guide(o: ParkingOption, speak: Boolean = true) {
         val lat = o.lat; val lng = o.lng
         if (lat == null || lng == null) return
         follower.guidingTo(o.name)
-        if (navi.via(Place(o.name, lat, lng), hasRoute = naviRoute)) {
+        if (navi.via(Place(o.name, lat, lng), hasRoute = naviRoute) && speak) {
             voice.speak("${o.name}${if (endsWithBatchim(o.name)) "을" else "를"} 경유지로 넣었어요.")
         }
     }
@@ -292,7 +323,8 @@ class MainActivity : Activity() {
             addView(Ui.text(this@MainActivity, "도보 ${o.walkMinutes}분" + if (o.fee == null) " · 요금 정보 없음" else "", 22, Ui.MUTED))
         }, lp(0, WRAP, 1f))
         addView(Ui.text(this@MainActivity, Ui.won(o.fee), if (selected) 48 else 36, if (o.fee == 0) Ui.GREEN else Ui.TEXT, if (selected) 900 else 700))
-        setOnClickListener { index = i; render() }
+        // 카드를 누르면 바로 경유지로: 옆의 내비 지도에 그 주차장 경로가 그려진다 (PRD S2)
+        setOnClickListener { index = i; guide(o, speak = false); render() }
     }
 
     private fun parkedScreen(s: ParkingSession): View = Ui.vbox(this, 28).apply {
@@ -554,6 +586,8 @@ class MainActivity : Activity() {
     private companion object {
         const val EXTRA_SKIP_MIN = "skipMin"
         const val EXTRA_DEST = "dest"
+        const val EXTRA_REMAIN = "remain"
+        const val EXTRA_ARRIVE = "arrive"
         const val TAG = "ParkDeal"
         val SEOUL: java.time.ZoneId = java.time.ZoneId.of("Asia/Seoul")
     }

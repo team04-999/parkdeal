@@ -17,7 +17,14 @@ import com.parkdeal.core.navi.Place
  * NaviHelper 는 내비 탑재 차량에서만 완전히 동작하므로(docs/pleos-guidelines.md 4장) 초기화에 실패하면
  * [available] 이 false 로 남고 앱은 데모 목적지로 동작한다.
  */
-class NaviSource(context: Context, private val onDestination: (Place, remainMeters: Int) -> Unit) {
+class NaviSource(
+    context: Context,
+    private val onDestination: (Place, remainMeters: Int) -> Unit,
+    /** 주행 중 목적지까지 남은 거리(m). 내비가 보내는 주행 정보 이벤트에서 받는다 (폴링하지 않는다). */
+    private val onRemain: (destName: String, meters: Int) -> Unit = { _, _ -> },
+    /** 경유지(고른 주차장)에 다 왔다. */
+    private val onWaypointArrived: (name: String) -> Unit = {},
+) {
     private val navi = NaviHelper(context.applicationContext)
     private val main = Handler(Looper.getMainLooper())
     @Volatile var available = false
@@ -30,6 +37,13 @@ class NaviSource(context: Context, private val onDestination: (Place, remainMete
             main.post { onDestination(Place(info.name, info.latitude, info.longitude), info.remainDistance) }
         }
         override fun onDestinationChanged() { navi.getDestinationInfo() }
+        override fun onDrivingInfo(info: ai.pleos.playground.navi.data.DrivingInfo) {
+            val d = info.destination ?: return
+            main.post { onRemain(d.name, d.distance) }
+        }
+        override fun onWayPointArrived(info: ai.pleos.playground.navi.data.WaypointArrivedInfo) {
+            main.post { onWaypointArrived(info.name) }
+        }
         override fun onRouteStarted(info: ai.pleos.playground.navi.data.RouteStartInfo) { navi.getDestinationInfo() }
     }
 
