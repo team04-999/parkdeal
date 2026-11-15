@@ -692,7 +692,8 @@ class MainActivity : Activity() {
             setPadding(dp(24), 0, 0, 0)
         })
         addView(Ui.grow(this@MainActivity))
-        addView(Ui.text(this@MainActivity, "정보 출처: 네이버 지도 · ${originText(origin)}", 22, Ui.FAINT))
+        val seoul = recommendation?.options?.any { it.lotId < 0 } == true // 서울시 공영주차장이 섞였을 때
+        addView(Ui.text(this@MainActivity, "정보 출처: 네이버 지도" + (if (seoul) " · 서울 열린데이터광장" else "") + " · ${originText(origin)}", 22, Ui.FAINT))
     }
 
     private fun stayChoices(): List<Int> {

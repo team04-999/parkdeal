@@ -8,9 +8,11 @@
 
 | 순간 | 빡딜이 하는 일 | 쓰는 Pleos SDK |
 |---|---|---|
-| 내비에 목적지 설정 | 목적지 가게의 주차 혜택(예: "이용 시 2시간 무료")과 주변 주차장 요금을 합쳐 **머무를 시간 동안 실제 낼 돈 + 걷는 거리**로 추천. 주행 중이라 화면 대신 음성으로 브리핑 | NaviHelper, TextToSpeech |
-| 정차 후 | 주차 비교 화면에서 고른 주차장으로 내비 경로 변경 | NaviHelper |
-| P단 진입 | 그 주차장으로 주차 기록 시작. 무료 시간이 15분 남으면 음성·알림 | Vehicle(기어), TextToSpeech |
+| 내비에 목적지 설정 | 목적지 가게의 주차 혜택(예: "이용 시 2시간 무료")과 주변 주차장 요금을 합쳐 **머무를 시간 동안 실제 낼 돈 + 걷는 거리**로 추천. 같은 건물 다른 가게 혜택("임팩트 이용 시 무료 → 0원"), 서울시 공영주차장 요금·**실시간 빈자리**까지 함께 비교. 첫 안내는 음성으로. 집·회사(내비 즐겨찾기)로 갈 때는 먼저 말하지 않음 | NaviHelper, TextToSpeech |
+| 이 차에 맞게 | 전기차면(배터리 잔량을 읽을 수 있으면) **전기차 불가 주차장을 맨 뒤로**. 기계식·만차 잦음·협소·발렛·높이 제한 배지 | Vehicle(EvBattery) |
+| 주행 중 | 주행 제한이 걸리면 고른 곳 하나 + 짧은 후보 목록만. 누르면 바로 경유지 변경. 도착 1km 전·경유지 도착 때 음성 안내 | CarUxRestrictions, NaviHelper, TextToSpeech |
+| 정차 후 | 주차 비교 화면에서 카드를 누르면 그 주차장이 내비 **경유지**로(목적지는 가게 그대로). 내비 옆 반쪽 창에서도 동작 | NaviHelper |
+| P단 진입 | 그 주차장으로 주차 기록 시작. "○○ 이용하고 카운터에 차량번호를 알려 주세요"처럼 **등록 방법**까지 안내. 무료 시간이 15분 남으면 음성·알림 | Vehicle(기어), TextToSpeech |
 | 출차 (P → D/R) | "○○에서 무료 주차 등록하셨나요? 등록하지 않으면 약 18,000원이 나와요" 음성·알림 | Vehicle(기어), TextToSpeech |
 | 언제든 | "말로 묻기"를 누르고 "제일 싼 데 어디야", "다른 데는?", "2번으로", "지금 얼마야", "등록했어"처럼 말하면 답하고 실행 (온디바이스 인식, 외부 전송 없음) | SpeechToText, TextToSpeech |
 | 출차 확인 후 | 주차 기록을 쌓아 이번 달 낸 돈과 **혜택으로 아낀 금액**을 보여 줌 | — |
@@ -36,7 +38,7 @@ adb shell am start -n com.parkdeal.app/.MainActivity
 | 에뮬레이터 빌드 | `release_connect_v2.1.0` |
 | 화면 규격 | 2560×1440, 160dpi |
 | AVD 부팅 옵션 | **cold boot** (quick boot 에서는 VHAL 을 쓸 수 없어 기어를 읽지 못한다) |
-| 앱 권한 | 기어 `pleos.car.permission.CAR_DRIVE`, 내비 `NAVI_ROUTE`·`NAVI_ROUTE_SEARCH`, 음성 `TTS_SERVICE`·`STT_SERVICE`, 마이크 `RECORD_AUDIO`, 알림 `POST_NOTIFICATIONS` |
+| 앱 권한 | 기어 `pleos.car.permission.CAR_DRIVE`, 전기차 여부 `CAR_ENERGY`, 내비 `NAVI_ROUTE`·`NAVI_ROUTE_SEARCH`, 음성 `TTS_SERVICE`·`STT_SERVICE`, 마이크 `RECORD_AUDIO`, 알림 `POST_NOTIFICATIONS` |
 | 인터넷 | 있으면 주차 데이터 서버(`parkdeal-api.daeuk.cloud`)에서 최신 값을 받는다. 없으면 마지막으로 받은 값 → 앱에 넣은 데모 목적지 데이터 순으로 동작 |
 
 ### 시연 순서 (에뮬레이터)
