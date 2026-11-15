@@ -127,10 +127,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         content = FrameLayout(this).apply { setBackgroundColor(Ui.GROUND) }
         setContentView(content)
-        // 알림(출차 안내)과 차 위치(다른 곳에 세웠는지 확인)는 실행 중 허락이 필요한 권한이다
-        val need = listOf(Manifest.permission.POST_NOTIFICATIONS, FUSED_LOCATION)
-            .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-        if (need.isNotEmpty()) requestPermissions(need.toTypedArray(), 1)
+        // 권한은 켜자마자 묻지 않는다: 우리 화면에서 무엇에 쓰는지 먼저 말하고 묻는다 (permitScreen)
         voice // TTS·STT 엔진을 미리 띄워 첫 안내·첫 질문이 늦지 않게
         listener
         driving
@@ -393,6 +390,8 @@ class MainActivity : Activity() {
             st.reminder != null -> "reminder"
             st.session?.stop == true -> "stop"
             st.session != null -> if (st.session!!.elapsedMin(now) < 10 && st.session!!.farFrom == null) "parked" else "parking"
+            // 처음 한 번, 정차 중에만: 시스템 권한 창을 띄우기 전에 무엇에 쓰는지 알린다
+            !drive && !permitSkipped && !permitAsked() && missingPermits().isNotEmpty() -> "permit"
             r != null && r.options.isNotEmpty() -> if (drive) "drive" else "compare"
             place == null -> "waiting"
             else -> "empty"
@@ -403,6 +402,7 @@ class MainActivity : Activity() {
             "drive" -> drivingScreen(r!!)
             "compare" -> compareScreen(r!!)
             "waiting" -> waitingScreen()
+            "permit" -> permitScreen()
             else -> emptyScreen()
         }
         val scrolls = HashMap<String, Int>()
@@ -1053,6 +1053,42 @@ class MainActivity : Activity() {
         }
     }
 
+    // ---- 권한 안내
+
+    /** "나중에"는 이번 실행에서만 넘긴다. 다음에 켜면 다시 안내한다. */
+    private var permitSkipped = false
+    private fun permitAsked() = getPreferences(MODE_PRIVATE).getBoolean(KEY_PERMIT_ASKED, false)
+    private fun missingPermits() = listOf(Manifest.permission.POST_NOTIFICATIONS, FUSED_LOCATION)
+        .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+
+    /**
+     * 시스템 권한 창은 앱이 모양도 문구도 바꿀 수 없고, Pleos 차 위치 권한은 "알 수 없는 작업"이라고만 나온다.
+     * 그래서 창을 띄우기 전에 무엇을 왜 허용하는지 우리 화면에서 먼저 말한다.
+     */
+    private fun permitScreen(): View = kit.pad(Ui.vbox(this, 0), compact()).apply {
+        val need = missingPermits()
+        val rows = buildList {
+            if (Manifest.permission.POST_NOTIFICATIONS in need) add("알림" to "출차할 시간이 되면 알려 드려요")
+            if (FUSED_LOCATION in need) add("차 위치" to "추천과 다른 곳에 세웠는지 확인해요")
+        }
+        addView(kit.topBar(""), lp(MATCH, WRAP))
+        addView(kit.spring())
+        addView(kit.col(28,
+            kit.title(if (rows.size > 1) "시작하기 전에\n두 가지만 허용해 주세요" else "시작하기 전에\n${rows.first().first}${if (rows.first().first == "알림") "을" else "를"} 허용해 주세요", fit(56)),
+            FrameLayout(this@MainActivity).apply {
+                addView(kit.sheet(Ui.vbox(this@MainActivity, 0).apply { addView(kit.table(rows), lp(MATCH, WRAP)) }),
+                    FrameLayout.LayoutParams(if (compact()) MATCH else dp(820), WRAP))
+            },
+            kit.body("이어서 뜨는 창에서 ‘허용’을 눌러 주세요. 위치는 주차할 때 한 번만 읽어요.", 26, Ui.INK3),
+            Ui.hbox(this@MainActivity, 16).apply {
+                addView(Ui.button(this@MainActivity, "허용하고 시작", true, 112, 32) { requestPermissions(need.toTypedArray(), REQ_PERMIT) }.apply { minimumWidth = dp(400) })
+                addView(Ui.button(this@MainActivity, "나중에", false, 112, 30) { permitSkipped = true; render() })
+            },
+        ), lp(MATCH, WRAP))
+        addView(kit.spring())
+        addView(kit.spring())
+    }
+
     // ---- 음성으로 묻기 (SpeechToText)
 
     private val listener by lazy { Listener(this, ::onListen) }
@@ -1070,6 +1106,8 @@ class MainActivity : Activity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQ_MIC && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) ask()
+        // 허용하든 안 하든 한 번 물었으면 다시 막아서지 않는다
+        if (requestCode == REQ_PERMIT) { getPreferences(MODE_PRIVATE).edit().putBoolean(KEY_PERMIT_ASKED, true).apply(); render() }
     }
 
     private fun onListen(state: Listener.State) {
@@ -1140,6 +1178,8 @@ class MainActivity : Activity() {
     private companion object {
         const val EXTRA_SKIP_MIN = "skipMin"
         const val REQ_MIC = 2
+        const val REQ_PERMIT = 3
+        const val KEY_PERMIT_ASKED = "permitAsked"
         /** 걷는 거리(어림)가 이보다 짧으면 "목적지 바로 앞" */
         const val NEAR_M = 40
         const val FUSED_LOCATION = "pleos.car.permission.FUSED_LOCATION"
