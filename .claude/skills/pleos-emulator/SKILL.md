@@ -45,9 +45,10 @@ description: Use when running, testing, or demoing the app on the Pleos Connect 
 
 ## 주행 중 확인
 
-ParkDeal 은 `distractionOptimized` 를 선언하지 않는다([`docs/pleos-guidelines.md`](../../../docs/pleos-guidelines.md)).
-그래서 주행 중에는 시스템이 화면을 막는 것("주행 중에는 사용할 수 없습니다")이 **의도한 동작**이다.
-주행 중 동작은 화면 대신 **TTS 와 알림**으로 확인한다. 현재 주행 규제 상태는
+ParkDeal 은 `distractionOptimized` 를 선언한다. 주행 제한 중에는 줄인 화면(고른 곳 + 짧은 목록)이 보여야 한다.
+선언하지 않은 앱은 "주행 중에는 사용할 수 없습니다"로 막힌다.
+주행 제한을 걸려면 D단에서 속도를 올린다: 하트비트를 유지하면서
+`PUT /vehicle/controls?speed=30&accelerator=20&brake=0&steering=0`. 현재 주행 규제 상태는
 `adb shell dumpsys car_service | grep "UXR:"` 로 본다 (`DO: true UxR: …` 면 규제 중).
 Pleos 문서의 `cmd hmg_car_service … driving_regulation on|off` 는 실차용이라 에뮬레이터에는 없다.
 
