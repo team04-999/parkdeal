@@ -13,6 +13,7 @@
 | 이 차에 맞게 | 전기차면(배터리 잔량을 읽을 수 있으면) **전기차 불가 주차장을 맨 뒤로**. 기계식·만차 잦음·협소·발렛·높이 제한 배지 | Vehicle(EvBattery) |
 | 주행 중 | 주행 제한이 걸리면 고른 곳 하나 + 짧은 후보 목록만. 누르면 바로 경유지 변경. 도착 1km 전·경유지 도착 때 음성 안내 | CarUxRestrictions, NaviHelper, TextToSpeech |
 | 정차 후 | 주차 비교 화면에서 카드를 누르면 그 주차장이 내비 **경유지**로(목적지는 가게 그대로). 내비 옆 반쪽 창에서도 동작 | NaviHelper |
+| 잠깐 세울 때 | 머무를 시간에서 "정차"를 고르면 목적지 근처 **5분 정차 허용 구간**(구청 지정, 서울 일부 구)을 보여 주고, 세우면 5분 타이머와 1분 전·초과 음성·알림 | Vehicle(기어), TextToSpeech |
 | P단 진입 | 그 주차장으로 주차 기록 시작. 차 위치가 150m 넘게 떨어져 있으면 "어디에 세우셨나요?"로 근처 후보 중 고르게 함(R → P 로 자리만 고친 것은 출차로 보지 않음). "○○ 이용하고 카운터에 차량번호를 알려 주세요"처럼 **등록 방법**까지 안내. 무료 시간이 15분 남으면 음성·알림 | Vehicle(기어), FusedLocation, TextToSpeech |
 | 출차 (P → D/R) | "○○에서 무료 주차 등록하셨나요? 등록하지 않으면 약 18,000원이 나와요" 음성·알림 | Vehicle(기어), TextToSpeech |
 | 언제든 | "말로 묻기"를 누르고 "제일 싼 데 어디야", "다른 데는?", "2번으로", "지금 얼마야", "등록했어"처럼 말하면 답하고 실행 (온디바이스 인식, 외부 전송 없음) | SpeechToText, TextToSpeech |
@@ -29,7 +30,7 @@ adb install -r apk/team04_parkdeal_release.apk
 adb shell am start -n com.parkdeal.app/.MainActivity
 ```
 
-첫 실행 때 알림 권한을 허용한다.
+첫 실행 때 "시작하기 전에" 안내 화면에서 **허용하고 시작**을 누르고, 이어서 뜨는 창에서 알림·차 위치 권한을 허용한다.
 
 ## 테스트 환경과 필요한 설정
 
@@ -39,14 +40,14 @@ adb shell am start -n com.parkdeal.app/.MainActivity
 | 에뮬레이터 빌드 | `release_connect_v2.1.0` |
 | 화면 규격 | 2560×1440, 160dpi |
 | AVD 부팅 옵션 | **cold boot** (quick boot 에서는 VHAL 을 쓸 수 없어 기어를 읽지 못한다) |
-| 앱 권한 | 기어 `pleos.car.permission.CAR_DRIVE`, 전기차 여부 `CAR_ENERGY`, 차 위치 `FUSED_LOCATION`(실행 중 허락), 내비 `NAVI_ROUTE`·`NAVI_ROUTE_SEARCH`, 음성 `TTS_SERVICE`·`STT_SERVICE`, 마이크 `RECORD_AUDIO`, 알림 `POST_NOTIFICATIONS` |
+| 앱 권한 | 기어 `pleos.car.permission.CAR_DRIVE`, 전기차 여부 `CAR_ENERGY`, 차 위치 `FUSED_LOCATION`(실행 중 허락), 내비 `NAVI_ROUTE`·`NAVI_ROUTE_SEARCH`·`NAVI_CUSTOM_MAP`(내비 화면 열기), 음성 `TTS_SERVICE`·`STT_SERVICE`, 마이크 `RECORD_AUDIO`, 알림 `POST_NOTIFICATIONS` |
 | 인터넷 | 있으면 주차 데이터 서버(`parkdeal-api.daeuk.cloud`)에서 최신 값을 받는다. 없으면 마지막으로 받은 값 → 앱에 넣은 데모 목적지 데이터 순으로 동작 |
 
 ### 시연 순서 (에뮬레이터)
 
-1. 앱을 켠다. 내비 목적지가 없으면 데모 목적지(강남역 필앤필버거) 기준 주차 비교가 나온다
-2. 내비에서 목적지를 설정하면 그 목적지로 추천이 바뀌고 음성 브리핑이 나온다
-3. "1번으로 안내"를 누르면 내비 경로가 그 주차장으로 바뀐다
+1. 앱을 켠다. 내비 목적지가 없으면 안내 화면("내비에서 목적지 찾기" 버튼과 비교 미리보기)이 나온다
+2. "내비에서 목적지 찾기"를 눌러 내비에서 목적지(예: 강남역 필앤필버거 강남본점)를 설정하면 그 목적지 기준 주차 비교가 나오고 음성 브리핑이 나온다
+3. 주차장 줄을 누르면 그 주차장이 내비 경유지로 들어간다 (목적지는 가게 그대로)
 4. Virtual Console 에서 기어를 D → P 로 바꾸면 주차 기록이 시작된다
 5. P → D 로 바꾸면 출차 알림과 음성 안내가 나온다
 
