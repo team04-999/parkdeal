@@ -8,6 +8,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 기어(P 진입·출차) 읽기: Pleos Vehicle SDK -->
     <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />
+    <!-- 내비 목적지 받기와 주차장으로 경로 바꾸기: Pleos NaviHelper -->
+    <uses-permission android:name="pleos.car.permission.NAVI_ROUTE" />
+    <uses-permission android:name="pleos.car.permission.NAVI_ROUTE_SEARCH" />
     <!-- 음성 안내: Pleos TextToSpeech -->
     <uses-permission android:name="pleos.car.permission.TTS_SERVICE" />
     <!-- 화면이 가려진 주행 중에도 기어를 받고 출차 알림을 보낸다 -->
