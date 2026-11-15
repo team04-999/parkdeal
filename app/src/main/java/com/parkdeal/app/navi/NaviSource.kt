@@ -20,6 +20,8 @@ class NaviSource(context: Context, private val onDestination: (Place, remainMete
     private val main = Handler(Looper.getMainLooper())
     @Volatile var available = false
         private set
+    /** 연결 전에 들어온 경로 요청. 연결되면 보낸다. */
+    private var pending: Place? = null
 
     private val listener = object : NaviHelperEventListener {
         override fun onDestinationInfo(info: DestinationInfo) {
@@ -35,14 +37,15 @@ class NaviSource(context: Context, private val onDestination: (Place, remainMete
                 available = true
                 navi.addListener(listener)
                 navi.getDestinationInfo()
+                main.post { pending?.let { pending = null; route(it) } }
             },
             { Log.w(TAG, "내비 연결 실패: ${it.message}") },
         )
     }
 
-    /** [place] 로 경로를 요청한다. 내비가 없으면 false. */
+    /** [place] 로 경로를 요청한다. 아직 연결 전이면 연결된 뒤 보낸다. 지금 보냈으면 true. */
     fun route(place: Place): Boolean {
-        if (!available) return false
+        if (!available) { pending = place; return false }
         navi.requestRoute(RouteInfo(latitude = place.lat, longitude = place.lng, poiName = place.name, poiId = "", address = "", poiSubId = ""))
         return true
     }

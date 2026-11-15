@@ -101,7 +101,7 @@ class ParkingTrackerTest {
         val t = tracker().apply { this.candidate = this@ParkingTrackerTest.candidate }
         t.onGear(Gear.DRIVE); t.onGear(Gear.PARK); t.onGear(Gear.DRIVE)
         t.dismissReminder()
-        assertEquals(ParkingState(), tracker().state)
+        assertNull(tracker().state.reminder)
     }
 
     @Test fun `상태가 바뀔 때마다 알린다`() {

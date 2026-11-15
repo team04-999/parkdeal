@@ -38,6 +38,7 @@ import com.parkdeal.core.api.ParkingRepository
 import com.parkdeal.core.durationText
 import com.parkdeal.core.parking.Candidate
 import com.parkdeal.core.parking.ExitReminder
+import com.parkdeal.core.parking.MonthSummary
 import com.parkdeal.core.parking.ParkingSession
 import com.parkdeal.core.parking.ParkingState
 import com.parkdeal.core.parking.ParkingTalk
@@ -306,8 +307,9 @@ class MainActivity : Activity() {
         addView(Ui.text(this@MainActivity, "출발할 때(P → D) 혜택 등록을 확인해 드려요", 24, Ui.FAINT))
     }
 
-    private fun reminderScreen(rm: ExitReminder): View = Ui.vbox(this, 28).apply {
+    private fun reminderScreen(rm: ExitReminder): View = Ui.hbox(this, 28).apply {
         setPadding(dp(56), dp(44), dp(56), dp(28))
+        gravity = Gravity.TOP
         val s = rm.session
         val fee = rm.fee
         val store = s.hasBenefit
@@ -334,14 +336,47 @@ class MainActivity : Activity() {
             }
             addView(Ui.grow(this@MainActivity))
             addView(Ui.hbox(this@MainActivity, 24).apply {
-                addView(Ui.button(this@MainActivity, if (store) "등록했어요" else "확인", true, 112, 38) {
-                    tracker.dismissReminder()
+                addView(Ui.button(this@MainActivity, if (store) "등록했어요" else "확인", true, 112, 36) {
+                    tracker.dismissReminder(registered = store)
+                }, lp(0, dp(112), 2f))
+                if (store) addView(Ui.button(this@MainActivity, "못 했어요", false, 112, 32) {
+                    tracker.dismissReminder(registered = false)
                 }, lp(0, dp(112), 1f))
-                if (store) addView(Ui.button(this@MainActivity, "다시 듣기", false, 112, 34) {
+                if (store) addView(Ui.button(this@MainActivity, "다시 듣기", false, 112, 32) {
                     voice.speak(ParkingTalk.exitReminder(rm))
                 }, lp(0, dp(112), 1f))
             })
-        }, lp(MATCH, 0, 1f))
+        }, lp(0, MATCH, 1f))
+        addView(monthPanel(), lp(dp(440), MATCH))
+    }
+
+    /** 이번 달 주차 기록: 낸 돈(추정)과 가게 혜택으로 아낀 돈. 출차 리마인드를 닫을 때 쌓인다. */
+    private fun monthPanel(): View = Ui.vbox(this, 22).apply {
+        setPadding(dp(40), dp(44), dp(40), dp(40))
+        background = Ui.rounded(Ui.CARD, 40, this@MainActivity)
+        val now = java.time.ZonedDateTime.now(SEOUL)
+        val history = tracker.state.history
+        val sum = MonthSummary.of(history, now.year, now.monthValue, SEOUL)
+        addView(Ui.text(this@MainActivity, "${now.monthValue}월 주차 기록", 32, Ui.TEXT, 900))
+        addView(Ui.vbox(this@MainActivity, 6).apply {
+            addView(Ui.text(this@MainActivity, "혜택으로 아낀 금액", 22, Ui.MUTED))
+            addView(Ui.text(this@MainActivity, Ui.won(sum.saved), 56, Ui.GREEN, 900))
+            addView(Ui.text(this@MainActivity, "주차 ${sum.count}번 · 낸 돈 약 ${Ui.won(sum.paid)}", 22, Ui.MUTED))
+        })
+        addView(View(this@MainActivity).apply { setBackgroundColor(Ui.BUTTON) }, lp(MATCH, dp(1)))
+        val recent = history.takeLast(4).reversed()
+        if (recent.isEmpty()) addView(Ui.text(this@MainActivity, "아직 기록이 없어요.\n출차 확인을 마치면 쌓여요.", 24, Ui.MUTED).apply { setLineSpacing(0f, 1.4f) })
+        recent.forEach { e ->
+            val d = java.time.Instant.ofEpochMilli(e.endedAt).atZone(SEOUL)
+            addView(Ui.hbox(this@MainActivity, 16).apply {
+                addView(Ui.vbox(this@MainActivity, 4).apply {
+                    addView(Ui.text(this@MainActivity, e.lotName, 24, Ui.TEXT, 700).apply { maxLines = 1 })
+                    addView(Ui.text(this@MainActivity, "${d.monthValue}/${d.dayOfMonth} · ${durationText(e.minutes)}" +
+                        if (e.saved > 0) " · ${Ui.won(e.saved)} 아낌" else "", 20, if (e.saved > 0) Ui.GREEN else Ui.MUTED))
+                }, lp(0, WRAP, 1f))
+                addView(Ui.text(this@MainActivity, Ui.won(e.paid), 26, Ui.TEXT, 700))
+            })
+        }
     }
 
     private fun emptyScreen(): View = Ui.vbox(this, 40).apply {
@@ -367,6 +402,11 @@ class MainActivity : Activity() {
     private fun footer(): View = Ui.hbox(this).apply {
         addView(Ui.hbox(this@MainActivity, 14).apply {
             addView(logo(40)); addView(Ui.text(this@MainActivity, "빡딜", 24, Ui.TEXT, 900))
+        })
+        val now = java.time.ZonedDateTime.now(SEOUL)
+        val saved = MonthSummary.of(tracker.state.history, now.year, now.monthValue, SEOUL).saved
+        if (saved > 0) addView(Ui.text(this@MainActivity, "${now.monthValue}월 혜택으로 ${Ui.won(saved)} 아꼈어요", 22, Ui.GREEN, 700).apply {
+            setPadding(dp(24), 0, 0, 0)
         })
         addView(Ui.grow(this@MainActivity))
         addView(Ui.text(this@MainActivity, "정보 출처: 네이버 지도 · ${originText(origin)}", 22, Ui.FAINT))
@@ -411,5 +451,6 @@ class MainActivity : Activity() {
         const val EXTRA_SKIP_MIN = "skipMin"
         const val EXTRA_DEST = "dest"
         const val TAG = "ParkDeal"
+        val SEOUL: java.time.ZoneId = java.time.ZoneId.of("Asia/Seoul")
     }
 }

@@ -20,9 +20,30 @@ interface GearSource {
 /** 지금 P단에 넣으면 주차할 곳으로 보는 주차장: 추천에서 고른 것. */
 data class Candidate(val option: ParkingOption, val storeName: String?, val destName: String)
 
-/** 기기에 저장하는 주차 상태. 둘 다 null 이면 대기 중. */
+/** 기기에 저장하는 주차 상태. session·reminder 가 둘 다 null 이면 대기 중. [history] 는 최근 것이 뒤. */
 @Serializable
-data class ParkingState(val session: ParkingSession? = null, val reminder: ExitReminder? = null)
+data class ParkingState(
+    val session: ParkingSession? = null,
+    val reminder: ExitReminder? = null,
+    val history: List<LogEntry> = emptyList(),
+)
+
+/** 출차 1건의 기록. [paid] 는 요금 규칙을 모르면 null. */
+@Serializable
+data class LogEntry(val endedAt: Long, val lotName: String, val minutes: Int, val paid: Int?, val saved: Int)
+
+/** 한 달 주차 합계: 낸 돈(추정)과 가게 혜택으로 아낀 돈. */
+data class MonthSummary(val count: Int, val paid: Int, val saved: Int) {
+    companion object {
+        fun of(history: List<LogEntry>, year: Int, month: Int, zone: java.time.ZoneId): MonthSummary {
+            val inMonth = history.filter {
+                val d = java.time.Instant.ofEpochMilli(it.endedAt).atZone(zone)
+                d.year == year && d.monthValue == month
+            }
+            return MonthSummary(inMonth.size, inMonth.sumOf { it.paid ?: 0 }, inMonth.sumOf { it.saved })
+        }
+    }
+}
 
 /** 저장소. 앱에서는 SharedPreferences, 테스트에서는 메모리. */
 interface StateStore {
@@ -73,7 +94,7 @@ class ParkingTracker(private val store: StateStore, private val clock: () -> Lon
             startedAt = clock(), lotId = o.lotId, lotName = o.name, lat = o.lat, lng = o.lng, rule = o.rule,
             freeMin = o.freeMin, storeName = c.storeName.takeIf { o.freeMin > 0 }, reason = o.reason, destName = c.destName,
         )
-        update(ParkingState(session = s))
+        update(state.copy(session = s, reminder = null))
         return s
     }
 
@@ -87,14 +108,26 @@ class ParkingTracker(private val store: StateStore, private val clock: () -> Lon
         return moved
     }
 
+    /** 출차 리마인드를 닫고 기록을 남긴다. [registered] 는 운전자가 "등록했어요"를 눌렀는지. */
     @Synchronized
-    fun dismissReminder() = update(state.copy(reminder = null))
+    fun dismissReminder(registered: Boolean = false) {
+        val r = state.reminder ?: return
+        val fee = r.fee
+        val entry = LogEntry(
+            endedAt = r.endedAt,
+            lotName = r.session.lotName,
+            minutes = fee?.minutes ?: r.session.elapsedMin(r.endedAt),
+            paid = fee?.let { if (registered) it.withBenefit else it.withoutBenefit },
+            saved = if (registered && fee != null) fee.saved else 0,
+        )
+        update(state.copy(reminder = null, history = (state.history + entry).takeLast(MAX_HISTORY)))
+    }
 
     private fun end(): ExitReminder? {
         val s = state.session ?: return null
         val r = ExitReminder(s, clock())
         candidate = null
-        update(ParkingState(reminder = r))
+        update(state.copy(session = null, reminder = r))
         return r
     }
 
@@ -110,6 +143,7 @@ class ParkingTracker(private val store: StateStore, private val clock: () -> Lon
     companion object {
         /** 시연용 건너뛰기 상한: 하루. */
         const val MAX_BACKDATE_MIN = 24 * 60
+        const val MAX_HISTORY = 100
         private val json = Json { ignoreUnknownKeys = true }
     }
 }
