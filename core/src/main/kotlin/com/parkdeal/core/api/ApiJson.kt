@@ -16,6 +16,8 @@ object ApiJson {
 
     fun lots(body: String): LotsResponse = parse(body) { json.decodeFromString(it) }
 
+    fun walk(body: String): WalkResponse = parse(body) { json.decodeFromString(it) }
+
     private inline fun <T> parse(body: String, decode: (String) -> T): T =
         try {
             decode(body)

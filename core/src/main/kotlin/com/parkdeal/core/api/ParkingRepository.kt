@@ -44,6 +44,8 @@ class ParkingRepository(
 
     fun lots(request: ApiRequest.Lots): Fetched<LotsResponse>? = fetch(request, ApiJson::lots)
 
+    fun walk(request: ApiRequest.Walk): Fetched<WalkResponse>? = fetch(request, ApiJson::walk)
+
     private fun <T> fetch(request: ApiRequest, parse: (String) -> T): Fetched<T>? {
         val key = request.cacheFile
 

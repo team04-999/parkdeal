@@ -121,3 +121,7 @@ data class Deal(
 /** 실시간 빈자리: 전체 [total] 면 중 [available] 면 남음. */
 @Serializable
 data class Live(val total: Int, val available: Int, val updatedAt: String = "")
+
+/** 실제 걷는 거리(m)·시간(분). */
+@Serializable
+data class WalkResponse(val distanceM: Int, val walkMin: Int, val source: String = "")
