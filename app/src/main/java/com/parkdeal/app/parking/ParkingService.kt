@@ -31,6 +31,8 @@ class ParkingService : Service() {
     private lateinit var voice: Voice
     private val handler = Handler(Looper.getMainLooper())
     private val warnTask = Runnable { onFreeWarn() }
+    /** 주차 시각이 바뀌면(시간 건너뛰기, 다른 화면에서 시작) 경고 타이머를 다시 건다. */
+    private val onState: (com.parkdeal.core.parking.ParkingState) -> Unit = { scheduleWarn() }
 
     override fun onCreate() {
         super.onCreate()
@@ -40,6 +42,7 @@ class ParkingService : Service() {
         gears = VehicleGearSource(this)
         gears.start(onGear = ::onGear, onUnavailable = { Log.w(TAG, "기어를 읽을 수 없음: ${it.message}") })
         scheduleWarn()
+        Parking.observe(onState)
         Log.d(TAG, "service start session=${tracker.state.session?.lotName} candidate=${tracker.candidate?.option?.name}")
     }
 
@@ -76,6 +79,7 @@ class ParkingService : Service() {
         val now = System.currentTimeMillis()
         if ((s.freeLeftMin(now) ?: 0) <= ParkingSession.WARN_BEFORE_MIN) return // 이미 지났다
         handler.postDelayed(warnTask, (at - now).coerceAtLeast(0))
+        Log.d(TAG, "free warn in ${(at - now) / 1000}s")
     }
 
     private fun onFreeWarn() {
@@ -87,6 +91,7 @@ class ParkingService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        Parking.unobserve(onState)
         gears.stop()
         voice.close()
         Log.d(TAG, "service stop")
