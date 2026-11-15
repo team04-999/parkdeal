@@ -14,6 +14,7 @@ import android.widget.FrameLayout
 import com.parkdeal.app.data.AssetSnapshot
 import com.parkdeal.app.data.FileResponseCache
 import com.parkdeal.app.data.HttpUrlTransport
+import com.parkdeal.app.drive.DrivingRestriction
 import com.parkdeal.app.navi.NaviSource
 import com.parkdeal.app.parking.Parking
 import com.parkdeal.app.parking.ParkingService
@@ -71,6 +72,7 @@ class MainActivity : Activity() {
     private var naviRoute = false
     private val follower = DestinationFollower()
     private val navi by lazy { NaviSource(this, ::onNaviDestination) }
+    private val driving by lazy { DrivingRestriction(this) { render() } }
     /** 내비 목적지로 추천을 만들었으면 불러온 뒤 한 번 브리핑한다. */
     private var briefPending = false
     private var dest: DestinationResponse? = null
@@ -97,6 +99,7 @@ class MainActivity : Activity() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
         voice // TTS 엔진을 미리 띄워 첫 안내가 늦지 않게
+        driving
         navi.start()
         demo(intent)
     }
@@ -169,6 +172,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         io.shutdownNow()
         navi.stop()
+        driving.close()
         voice.close()
         super.onDestroy()
     }
@@ -219,10 +223,12 @@ class MainActivity : Activity() {
         syncCandidate()
         val st = tracker.state
         val r = recommendation
+        // 주행 제한 중에는 줄인 화면만: 고른 곳 하나 + 짧은 목록, 입력·지도·긴 글 없음
+        val drive = driving.restricted
         val screen = when {
-            st.reminder != null -> reminderScreen(st.reminder!!)
+            st.reminder != null -> if (drive) drivingReminder(st.reminder!!) else reminderScreen(st.reminder!!)
             st.session != null -> parkedScreen(st.session!!)
-            r != null && r.options.isNotEmpty() -> compareScreen(r)
+            r != null && r.options.isNotEmpty() -> if (drive) drivingScreen(r) else compareScreen(r)
             else -> emptyScreen()
         }
         content.removeAllViews()
@@ -431,6 +437,68 @@ class MainActivity : Activity() {
                 }
             }
         }, lp(MATCH, WRAP))
+    }
+
+    /** 주행 중 (PRD S3·S4): 고른 곳(경유 중이면 그곳)을 크게, 다른 후보 3곳은 한 줄씩. 탭 한 번이면 경유지 변경. */
+    private fun drivingScreen(r: Recommendation): View = Ui.vbox(this, 24).apply {
+        setPadding(dp(56), dp(40), dp(56), dp(28))
+        val opts = r.options
+        val guided = opts.indexOfFirst { it.name == follower.guiding }
+        val topIndex = if (guided >= 0) guided else index
+        val top = opts[topIndex]
+        addView(Ui.hbox(this@MainActivity, 14).apply {
+            addView(logo(40)); addView(Ui.text(this@MainActivity, "빡딜", 24, Ui.TEXT, 900))
+            addView(Ui.grow(this@MainActivity))
+            addView(Ui.text(this@MainActivity, shownName(), 26, Ui.MUTED))
+        })
+        addView(Ui.vbox(this@MainActivity, 20).apply {
+            setPadding(dp(56), dp(44), dp(56), dp(44))
+            background = Ui.rounded(Ui.CARD, 40, this@MainActivity, if (guided >= 0) Ui.ACCENT else null, 2)
+            addView(Ui.text(this@MainActivity, if (guided >= 0) "경유 중" else "주차는 여기로", 30, Ui.ACCENT_TEXT, 700))
+            addView(Ui.hbox(this@MainActivity, 32).apply {
+                gravity = Gravity.BOTTOM
+                addView(Ui.text(this@MainActivity, top.name, 56, Ui.TEXT, 900).apply { maxLines = 1 }, lp(0, WRAP, 1f))
+                addView(Ui.text(this@MainActivity, Ui.won(top.fee), 96, if (top.fee == 0) Ui.GREEN else Ui.TEXT, 900))
+            })
+            if (top.reason.isNotEmpty()) addView(pill(top.reason, 28, Ui.GREEN, Ui.GREEN_BG), lp(WRAP, WRAP))
+            addView(Ui.text(this@MainActivity, "${durationText(stayMin)} 머물면 · 목적지까지 걸어서 ${top.walkMinutes}분", 28, Ui.TEXT2))
+            if (guided < 0) addView(Ui.button(this@MainActivity, "여기로 경유", true, 104, 36) { guide(top); render() }, lp(MATCH, dp(104)))
+        }, lp(MATCH, WRAP))
+        addView(Ui.text(this@MainActivity, "다른 후보", 24, Ui.MUTED))
+        opts.withIndex().filter { it.index != topIndex }.take(3).forEach { (i, o) ->
+            addView(Ui.hbox(this@MainActivity, 24).apply {
+                setPadding(dp(28), dp(18), dp(28), dp(18))
+                background = Ui.rounded(Ui.CARD, 24, this@MainActivity)
+                addView(numberPin(i + 1, false))
+                addView(Ui.text(this@MainActivity, o.name, 30, Ui.TEXT, 700).apply { maxLines = 1 }, lp(0, WRAP, 1f))
+                addView(Ui.text(this@MainActivity, Ui.won(o.fee), 36, if (o.fee == 0) Ui.GREEN else Ui.TEXT, 900))
+                setOnClickListener { index = i; guide(o); render() }
+            }, lp(MATCH, WRAP))
+        }
+        addView(Ui.grow(this@MainActivity))
+        addView(Ui.text(this@MainActivity, "주행 중에는 간단히 보여드려요 · 정차하면 전체 비교가 열려요", 22, Ui.FAINT))
+    }
+
+    /** 주행 중 출차 확인 (PRD S8): 질문 하나와 버튼 둘. 금액 비교·기록은 정차 후에. */
+    private fun drivingReminder(rm: ExitReminder): View = Ui.vbox(this, 32).apply {
+        setPadding(dp(56), dp(56), dp(56), dp(40))
+        val s = rm.session
+        val store = s.hasBenefit
+        val fee = rm.fee
+        addView(Ui.text(this@MainActivity, "출발 전에 확인하세요", 30, Ui.AMBER, 700))
+        addView(Ui.text(this@MainActivity,
+            if (store) "${s.storeName}에서\n주차 등록하셨나요?" else "${s.lotName}\n주차 요금을 확인하세요", 60, Ui.TEXT, 900).apply { setLineSpacing(0f, 1.15f) })
+        if (fee != null) addView(Ui.text(this@MainActivity,
+            if (store && fee.saved > 0) "안 하면 약 ${Ui.won(fee.withoutBenefit)}" else "약 ${Ui.won(fee.withoutBenefit)}", 36, Ui.TEXT2, 700))
+        addView(Ui.grow(this@MainActivity))
+        addView(Ui.hbox(this@MainActivity, 24).apply {
+            addView(Ui.button(this@MainActivity, if (store) "등록했어요" else "확인", true, 120, 38) {
+                tracker.dismissReminder(registered = store)
+            }, lp(0, dp(120), 1f))
+            if (store) addView(Ui.button(this@MainActivity, "못 했어요", false, 120, 36) {
+                tracker.dismissReminder(registered = false)
+            }, lp(0, dp(120), 1f))
+        })
     }
 
     // ---- 조각

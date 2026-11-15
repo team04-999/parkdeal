@@ -25,6 +25,8 @@ android {
     }
 
     buildFeatures { buildConfig = true }
+    // 주행 제한 상태(CarUxRestrictionsManager)
+    useLibrary("android.car")
 
     signingConfigs {
         if (signing.isNotEmpty()) create("release") {

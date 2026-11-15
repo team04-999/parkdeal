@@ -25,8 +25,9 @@
             android:name=".MainActivity"
             android:launchMode="singleTop"
             android:exported="true">
-            <!-- distractionOptimized 를 선언하지 않는다. 주행 중 안내는 TTS 로 하고,
-                 화면은 정차 후에 쓴다 (docs/pleos-guidelines.md 1장) -->
+            <!-- 주행 중에도 화면을 쓴다. 대신 주행 제한(CarUxRestrictions)이 걸리면 고른 곳 하나와
+                 짧은 목록만 보여준다 (docs/architecture.md, docs/pleos-guidelines.md 1장) -->
+            <meta-data android:name="distractionOptimized" android:value="true" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
