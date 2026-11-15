@@ -27,6 +27,7 @@
         <activity
             android:name=".MainActivity"
             android:launchMode="singleTop"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|uiMode"
             android:exported="true">
             <!-- 주행 중에도 화면을 쓴다. 대신 주행 제한(CarUxRestrictions)이 걸리면 고른 곳 하나와
                  짧은 목록만 보여준다 (docs/architecture.md, docs/pleos-guidelines.md 1장) -->

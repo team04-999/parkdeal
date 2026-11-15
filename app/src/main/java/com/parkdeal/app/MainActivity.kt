@@ -244,6 +244,18 @@ class MainActivity : Activity() {
     }
 
     private fun selected(): ParkingOption? = recommendation?.options?.getOrNull(index)
+
+    /** 내비 옆 반쪽 창처럼 좁은 창. 지도·기록 패널을 빼고 목록을 전체 폭으로 쓴다. */
+    private fun compact() = resources.configuration.screenWidthDp < 1100
+
+    /** 좁은 창에서는 큰 글자를 3/4 로 줄인다 (최소 12sp 규칙은 큰 글자에만 쓰므로 해당 없음). */
+    private fun fit(sp: Int) = if (compact()) sp * 3 / 4 else sp
+
+    /** 창 크기가 바뀌면(분할 비율 조절) 다시 만들지 않고 다시 그린다. 추천·선택 상태가 그대로 남는다. */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        render()
+    }
     private fun shownName() = shownPlace?.name ?: "목적지"
 
     /** 지금 고른 주차장을 "P 단에 넣으면 주차할 곳"으로 정한다. 주차 중·리마인드 중에는 건드리지 않는다. */
@@ -283,7 +295,9 @@ class MainActivity : Activity() {
 
     private fun compareScreen(r: Recommendation): View = Ui.vbox(this, 28).apply {
         setPadding(dp(56), dp(44), dp(56), dp(28))
-        addView(Ui.hbox(this@MainActivity).apply {
+        val narrow = compact()
+        // 반쪽 창(내비 옆)에서는 제목 아래로 체류 시간 줄을 내린다
+        addView((if (narrow) Ui.vbox(this@MainActivity, 16) else Ui.hbox(this@MainActivity)).apply {
             addView(Ui.vbox(this@MainActivity, 6).apply {
                 val loading = place != null && place != shownPlace
                 addView(Ui.text(this@MainActivity,
@@ -291,13 +305,13 @@ class MainActivity : Activity() {
                     26, if (loading) Ui.ACCENT_TEXT else Ui.MUTED))
                 addView(Ui.text(this@MainActivity, "주차 비교", 48, Ui.TEXT, 900))
             })
-            addView(Ui.grow(this@MainActivity))
-            addView(Ui.text(this@MainActivity, "머무를 시간", 26, Ui.MUTED).apply { setPadding(0, 0, dp(16), 0) })
+            if (!narrow) addView(Ui.grow(this@MainActivity))
             addView(Ui.hbox(this@MainActivity, 12).apply {
+                if (!narrow) addView(Ui.text(this@MainActivity, "머무를 시간", 26, Ui.MUTED).apply { setPadding(0, 0, dp(4), 0) })
                 stayChoices().forEach { m ->
-                    addView(Ui.button(this@MainActivity, durationText(m), m == stayMin, 72, 28) { stayMin = m; recompute() }.apply {
+                    addView(Ui.button(this@MainActivity, durationText(m), m == stayMin, 72, if (narrow) 24 else 28) { stayMin = m; recompute() }.apply {
                         background = Ui.rounded(if (m == stayMin) Ui.ACCENT else Ui.BUTTON, 20, this@MainActivity)
-                        setPadding(dp(32), 0, dp(32), 0)
+                        setPadding(dp(if (narrow) 20 else 32), 0, dp(if (narrow) 20 else 32), 0)
                     }, lp(WRAP, dp(72)))
                 }
             })
@@ -305,7 +319,8 @@ class MainActivity : Activity() {
         val opts = r.options.take(5)
         addView(Ui.hbox(this@MainActivity, 32).apply {
             gravity = Gravity.TOP
-            addView(MiniMapView(this@MainActivity).apply {
+            // 지도는 앱만 크게 볼 때만. 반쪽 창에서는 바로 옆 내비 지도에 경유지로 보인다
+            if (!narrow) addView(MiniMapView(this@MainActivity).apply {
                 destLat = shownPlace?.lat ?: 0.0; destLng = shownPlace?.lng ?: 0.0; options = opts; selected = index
             }, lp(dp(640), MATCH))
             addView(Ui.vbox(this@MainActivity, 14).apply {
@@ -325,7 +340,7 @@ class MainActivity : Activity() {
                         guide(o); render()
                     }, lp(0, dp(104), 2f))
                     addView(micButton(104), lp(0, dp(104), 1f))
-                    addView(Ui.button(this@MainActivity, "추천 듣기", false, 104, 30) { voice.speak(Briefing.sentence(r, stayMin)) }, lp(0, dp(104), 1f))
+                    addView(Ui.button(this@MainActivity, "추천 듣기", false, 104, if (narrow) 26 else 30) { voice.speak(Briefing.sentence(r, stayMin)) }, lp(0, dp(104), 1f))
                 })
             }, lp(0, MATCH, 1f))
         }, lp(MATCH, 0, 1f))
@@ -358,9 +373,9 @@ class MainActivity : Activity() {
             addView(Ui.text(this@MainActivity, if (justParked) "${s.lotName}에 세웠어요" else "주차 중 · ${s.destName}", 28, Ui.ACCENT_TEXT, 700))
             if (justParked && s.hasBenefit) {
                 // 세운 직후 할 일 하나: 혜택 가게 이용하고 등록하기 (PRD S7)
-                addView(Ui.text(this@MainActivity, "${s.storeName}\n이용하고 주차 등록하세요", 56, Ui.TEXT, 900).apply { setLineSpacing(0f, 1.15f) })
+                addView(Ui.text(this@MainActivity, "${s.storeName}\n이용하고 주차 등록하세요", fit(56), Ui.TEXT, 900).apply { setLineSpacing(0f, 1.15f) })
             } else {
-                addView(Ui.text(this@MainActivity, s.lotName, 64, Ui.TEXT, 900).apply { maxLines = 2 })
+                addView(Ui.text(this@MainActivity, s.lotName, fit(64), Ui.TEXT, 900).apply { maxLines = 2 })
             }
             if (s.reason.isNotEmpty()) addView(pill(s.reason, 28, Ui.GREEN, Ui.GREEN_BG), lp(WRAP, WRAP))
             if (justParked) addView(Ui.text(this@MainActivity, "${s.destName}까지 걸어서 ${s.walkMinutes}분", 30, Ui.TEXT2, 700))
@@ -397,7 +412,7 @@ class MainActivity : Activity() {
             addView(Ui.text(this@MainActivity, "출발 전에 확인하세요 · P → D", 28, Ui.AMBER, 700))
             addView(Ui.text(this@MainActivity,
                 if (store) "${s.storeName}에서\n무료 주차 등록하셨나요?" else "${s.lotName}\n주차 요금을 확인하세요",
-                64, Ui.TEXT, 900).apply { setLineSpacing(0f, 1.15f) })
+                fit(64), Ui.TEXT, 900).apply { setLineSpacing(0f, 1.15f) })
             if (fee != null) {
                 val h = durationText(fee.minutes)
                 addView(Ui.text(this@MainActivity, when {
@@ -407,7 +422,7 @@ class MainActivity : Activity() {
                 }, 30, Ui.TEXT2))
                 addView(Ui.hbox(this@MainActivity, 20).apply {
                     addView(stat("주차한 시간", h, Ui.TEXT), lp(0, WRAP, 1f))
-                    addView(stat("가게 혜택", if (store) durationText(s.freeMin) + " 무료" else "없음", Ui.TEXT), lp(0, WRAP, 1f))
+                    if (!compact()) addView(stat("가게 혜택", if (store) durationText(s.freeMin) + " 무료" else "없음", Ui.TEXT), lp(0, WRAP, 1f))
                     addView(stat(if (store) "등록 시 예상" else "예상 요금",
                         Ui.won(if (store) fee.withBenefit else fee.withoutBenefit), Ui.GREEN), lp(0, WRAP, 1f))
                 })
@@ -420,12 +435,12 @@ class MainActivity : Activity() {
                 if (store) addView(Ui.button(this@MainActivity, "못 했어요", false, 112, 32) {
                     tracker.dismissReminder(registered = false)
                 }, lp(0, dp(112), 1f))
-                if (store) addView(Ui.button(this@MainActivity, "다시 듣기", false, 112, 32) {
+                if (store && !compact()) addView(Ui.button(this@MainActivity, "다시 듣기", false, 112, 32) {
                     voice.speak(ParkingTalk.exitReminder(rm))
                 }, lp(0, dp(112), 1f))
             })
         }, lp(0, MATCH, 1f))
-        addView(monthPanel(), lp(dp(440), MATCH))
+        if (!compact()) addView(monthPanel(), lp(dp(440), MATCH))
     }
 
     /** 이번 달 주차 기록: 낸 돈(추정)과 가게 혜택으로 아낀 돈. 출차 리마인드를 닫을 때 쌓인다. */
@@ -563,7 +578,7 @@ class MainActivity : Activity() {
     /** 듣는 중·들은 말을 화면 위에 띄우는 한 줄. null 이면 숨김. */
     private var heard: String? = null
 
-    private fun micButton(height: Int) = Ui.button(this, "말로 묻기", false, height, 30) { ask() }
+    private fun micButton(height: Int) = Ui.button(this, "말로 묻기", false, height, if (compact()) 26 else 30) { ask() }
 
     private fun ask() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -671,7 +686,7 @@ class MainActivity : Activity() {
     private fun stat(label: String, value: String, color: Int) = Ui.vbox(this, 6).apply {
         setPadding(dp(28), dp(24), dp(28), dp(24)); background = Ui.rounded(Ui.RAISED, 24, this@MainActivity)
         addView(Ui.text(this@MainActivity, label, 22, Ui.MUTED))
-        addView(Ui.text(this@MainActivity, value, 40, color, 700))
+        addView(Ui.text(this@MainActivity, value, fit(40), color, 700).apply { maxLines = 1 })
     }
 
     private fun originText(origin: Origin?) = when (origin) {
