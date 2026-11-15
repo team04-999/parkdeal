@@ -9,7 +9,8 @@ data class Vehicle(val ev: Boolean?) {
 }
 
 /** 주차장 한 곳의 주의 배지와, 이 차가 들어갈 수 없는지. */
-data class LotNotes(val badges: List<String>, val blocked: Boolean, val blockReason: String?) {
+/** [fullNow]: 실시간으로 지금 남은 자리가 없다. */
+data class LotNotes(val badges: List<String>, val blocked: Boolean, val blockReason: String?, val fullNow: Boolean = false) {
     companion object {
         private val LABEL = mapOf(
             "full_often" to "만차 잦음", "mechanical" to "기계식", "narrow" to "협소",
@@ -28,13 +29,15 @@ data class LotNotes(val badges: List<String>, val blocked: Boolean, val blockRea
                     else -> LABEL[a]
                 }
             }.toMutableList()
+            // 실시간 빈자리를 맨 앞에: 지금 들어갈 수 있는지가 가장 중요하다
+            lot.live?.let { lv -> badges.add(0, if (lv.available > 0) "빈자리 ${lv.available}/${lv.total}" else "지금 만차") }
             if (lot.valet == true) badges += when (val f = lot.valetFee) {
                 null -> "발렛"
                 0 -> "무료 발렛"
                 else -> "발렛 %,d원".format(f)
             }
             lot.heightMm?.let { badges += "높이 %.1fm".format(it / 1000.0) }
-            return LotNotes(badges, blocked = block != null, blockReason = block?.let { LABEL[it] })
+            return LotNotes(badges, blocked = block != null, blockReason = block?.let { LABEL[it] }, fullNow = lot.live?.available == 0)
         }
     }
 }

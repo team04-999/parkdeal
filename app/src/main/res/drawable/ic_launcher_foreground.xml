@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 빡딜 아이콘: 흰 주차 표지 "P" 와 오른쪽 아래 할인 태그(0원 딜) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- P: 세로 기둥 + 둥근 고리 (안전 영역 66dp 안) -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M36,30h20c9.4,0 17,7.6 17,17s-7.6,17 -17,17h-10v14h-10z M46,40v14h10c3.9,0 7,-3.1 7,-7s-3.1,-7 -7,-7z" />
+    <!-- 할인 태그 -->
+    <path android:fillColor="#FFB020"
+        android:pathData="M60,66l10,-10h12v12l-10,10z" />
+    <path android:fillColor="#5A46FA"
+        android:pathData="M77.5,61.5m-2.5,0a2.5,2.5 0,1 1,5 0a2.5,2.5 0,1 1,-5 0" />
+</vector>

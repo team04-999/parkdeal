@@ -56,4 +56,12 @@ class LotNotesTest {
         assertEquals(listOf("주말만", "11:00–22:00"), BenefitHow.of(benefit(days = "weekend", from = "11:00", to = "22:00")).limits)
         assertTrue(BenefitHow.of(benefit(review = true)).needsReview)
     }
+
+    @Test fun `실시간 빈자리 - 남은 면수, 없으면 지금 만차`() {
+        val l = Lot(id = -1, name = "봉천복개3", kind = "public", live = com.parkdeal.core.api.Live(59, 27))
+        assertEquals(listOf("빈자리 27/59"), LotNotes.of(l, Vehicle.UNKNOWN).badges)
+        val full = l.copy(live = com.parkdeal.core.api.Live(59, 0))
+        assertEquals(listOf("지금 만차"), LotNotes.of(full, Vehicle.UNKNOWN).badges)
+        assertTrue(LotNotes.of(full, Vehicle.UNKNOWN).fullNow)
+    }
 }
