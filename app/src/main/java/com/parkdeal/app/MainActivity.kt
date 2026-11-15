@@ -35,6 +35,7 @@ import com.parkdeal.core.api.DestinationResponse
 import com.parkdeal.core.api.LotsResponse
 import com.parkdeal.core.api.ApiRequest
 import com.parkdeal.core.api.Origin
+import com.parkdeal.core.api.WalkResponse
 import com.parkdeal.core.navi.ApproachTrigger
 import com.parkdeal.core.navi.Bookmarks
 import com.parkdeal.core.navi.DestinationFollower
@@ -250,7 +251,30 @@ class MainActivity : Activity() {
         recommendation = Recommender.recommend(d, lots ?: LotsResponse(emptyList()), stayMin, vehicle)
         index = index.coerceIn(0, maxOf(0, (recommendation?.options?.size ?: 1) - 1))
         render()
+        fetchWalks()
     }
+
+    // ---- 실제 걷는 시간 (서버가 T맵 보행자 경로로 구한다). 없으면 직선거리 어림값을 쓴다
+
+    private val walks = mutableMapOf<Int, WalkResponse>()
+    private var walksFor: Place? = null
+
+    /** 상위 후보 5곳의 주차장 → 목적지 실제 도보. 받는 대로 화면에 반영한다. */
+    private fun fetchWalks() {
+        val p = shownPlace ?: return
+        if (walksFor != p) { walks.clear(); walksFor = p }
+        val targets = recommendation?.options.orEmpty().take(5).filter { it.lat != null && it.lng != null && it.lotId !in walks }
+        if (targets.isEmpty()) return
+        io.execute {
+            for (o in targets) {
+                val w = repository.walk(ApiRequest.Walk(o.lat!!, o.lng!!, p.lat, p.lng))?.value ?: continue
+                main.post { if (walksFor == p) { walks[o.lotId] = w; render() } }
+            }
+        }
+    }
+
+    private fun walkText(o: ParkingOption) =
+        walks[o.lotId]?.let { "걸어서 ${it.walkMin}분 · ${it.distanceM}m" } ?: "걸어서 약 ${o.walkMinutes}분"
 
     private fun selected(): ParkingOption? = recommendation?.options?.getOrNull(index)
 
@@ -270,9 +294,11 @@ class MainActivity : Activity() {
     /** 지금 고른 주차장을 "P 단에 넣으면 주차할 곳"으로 정한다. 주차 중·리마인드 중에는 건드리지 않는다. */
     private fun syncCandidate() {
         val st = tracker.state
-        val o = selected() ?: return
+        val sel = selected() ?: return
         if (st.session != null || st.reminder != null) return
         // 목적지 혜택이 없고 다른 가게 혜택을 쓰는 곳이면, 그 가게 기준으로 주차를 기록한다 (출차 때 그 가게 등록을 묻는다)
+        // 실제 도보를 알면 주차 기록에도 그 거리를 쓴다 (주차 직후 "걸어서 N분" 안내)
+        val o = walks[sel.lotId]?.let { w -> sel.copy(walkMeters = w.distanceM) } ?: sel
         val other = o.other
         tracker.candidate = if (o.freeMin == 0 && other != null) Candidate(other.applyTo(o), other.storeName, shownName())
             else Candidate(o, recommendation?.storeName, shownName())
@@ -379,7 +405,7 @@ class MainActivity : Activity() {
             }
             addView(Ui.hbox(this@MainActivity, 8).apply {
                 // 직선거리 × 1.2 로 어림한 값이라 "약" 을 붙인다 (보행 경로 API 연동 전)
-                addView(Ui.text(this@MainActivity, "걸어서 약 ${o.walkMinutes}분", 21, Ui.MUTED))
+                addView(Ui.text(this@MainActivity, walkText(o), 21, Ui.MUTED))
                 if (o.how?.needsReview == true) addView(tag("혜택 확인 필요", warn = true))
                 o.notes.take(if (compact()) 3 else 6).forEachIndexed { k, n -> addView(tag(n, warn = o.blocked && k == 0)) }
             })
@@ -561,7 +587,7 @@ class MainActivity : Activity() {
                 addView(Ui.text(this@MainActivity, Ui.won(top.fee), 96, if (top.fee == 0) Ui.GREEN else Ui.TEXT, 900))
             })
             if (top.reason.isNotEmpty()) addView(pill(top.reason, 28, Ui.GREEN, Ui.GREEN_BG), lp(WRAP, WRAP))
-            addView(Ui.text(this@MainActivity, "${durationText(stayMin)} 머물면 · 목적지까지 걸어서 약 ${top.walkMinutes}분", 28, Ui.TEXT2))
+            addView(Ui.text(this@MainActivity, "${durationText(stayMin)} 머물면 · 목적지까지 ${walkText(top)}", 28, Ui.TEXT2))
             if (guided < 0) addView(Ui.button(this@MainActivity, "여기로 경유", true, 104, 36) { guide(top); render() }, lp(MATCH, dp(104)))
         }, lp(MATCH, WRAP))
         addView(Ui.text(this@MainActivity, "다른 후보", 24, Ui.MUTED))

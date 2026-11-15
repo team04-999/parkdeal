@@ -30,6 +30,13 @@ sealed class ApiRequest {
             get() = "destination|${coord(lat)}|${coord(lng)}|${cleanName?.replace(Regex("\\s+"), "") ?: ""}"
     }
 
+    /** 주차장([fromLat],[fromLng]) → 목적지 실제 걷는 거리·시간 (서버가 T맵 보행자 경로로 구한다). */
+    data class Walk(val fromLat: Double, val fromLng: Double, val toLat: Double, val toLng: Double) : ApiRequest() {
+        override val path: String
+            get() = "/v1/walk?fromLat=${coord(fromLat)}&fromLng=${coord(fromLng)}&toLat=${coord(toLat)}&toLng=${coord(toLng)}"
+        override val cacheKey: String get() = "walk|${coord(fromLat)}|${coord(fromLng)}|${coord(toLat)}|${coord(toLng)}"
+    }
+
     data class Lots(val lat: Double, val lng: Double, val radius: Int = 800) : ApiRequest() {
         override val path: String get() = "/v1/lots?lat=${coord(lat)}&lng=${coord(lng)}&radius=$radius"
         override val cacheKey: String get() = "lots|${coord(lat)}|${coord(lng)}|$radius"

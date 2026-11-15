@@ -37,4 +37,14 @@ class ApiRequestTest {
         val f = ApiRequest.Destination(37.5, 127.0, "가/게\\이름:*").cacheFile
         assertEquals(true, Regex("^[0-9a-f]{16}\\.json$").matches(f))
     }
+
+    @Test fun `도보 요청 경로와 캐시 키`() {
+        val r = ApiRequest.Walk(37.48841, 126.93061, 37.486085, 126.930807)
+        assertEquals("/v1/walk?fromLat=37.4884&fromLng=126.9306&toLat=37.4861&toLng=126.9308", r.path)
+        assertEquals("walk|37.4884|126.9306|37.4861|126.9308", r.cacheKey)
+    }
+
+    @Test fun `도보 응답 해석`() {
+        assertEquals(WalkResponse(369, 6, "tmap"), ApiJson.walk("""{"distanceM":369,"walkMin":6,"source":"tmap"}"""))
+    }
 }
