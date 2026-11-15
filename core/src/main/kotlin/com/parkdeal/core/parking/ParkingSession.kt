@@ -26,6 +26,8 @@ data class ParkingSession(
     val walkMeters: Int = 0,
     /** 혜택 등록 방법 한 줄 (예: "카운터에 차량번호를 알려 주세요"). 모르면 null. */
     val redeemHint: String? = null,
+    /** 고른 주차장과 차 위치가 떨어져 있으면 그 정보. 운전자가 확인하면 지운다. */
+    val farFrom: FarFrom? = null,
 ) {
     /** 약 4km/h(분당 67m), 최소 1분. */
     val walkMinutes: Int get() = maxOf(1, (walkMeters + 66) / 67)

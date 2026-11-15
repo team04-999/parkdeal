@@ -49,6 +49,7 @@ import com.parkdeal.core.parking.MonthSummary
 import com.parkdeal.core.parking.ParkingSession
 import com.parkdeal.core.parking.ParkingState
 import com.parkdeal.core.parking.ParkingTalk
+import com.parkdeal.core.parking.ParkCheck
 import java.io.File
 import java.util.concurrent.Executors
 
@@ -107,9 +108,10 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         content = FrameLayout(this).apply { setBackgroundColor(Ui.BG) }
         setContentView(content)
-        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
-        }
+        // 알림(출차 안내)과 차 위치(다른 곳에 세웠는지 확인)는 실행 중 허락이 필요한 권한이다
+        val need = listOf(Manifest.permission.POST_NOTIFICATIONS, FUSED_LOCATION)
+            .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (need.isNotEmpty()) requestPermissions(need.toTypedArray(), 1)
         voice // TTS·STT 엔진을 미리 띄워 첫 안내·첫 질문이 늦지 않게
         listener
         driving
@@ -421,10 +423,12 @@ class MainActivity : Activity() {
         val now = System.currentTimeMillis()
         val left = s.freeLeftMin(now)
         val fee = s.fee(now)?.let { if (s.hasBenefit) it.withBenefit else it.withoutBenefit }
+        s.farFrom?.let { addView(placeCheck(s), lp(MATCH, WRAP)) }
         addView(Ui.vbox(this@MainActivity, 28).apply {
             setPadding(dp(64), dp(56), dp(64), dp(56))
             background = Ui.rounded(Ui.CARD, 40, this@MainActivity, Ui.ACCENT, 2)
-            val justParked = s.elapsedMin(now) < 10
+            // 어디 세웠는지 묻는 중에는 세운 직후의 큰 안내를 줄인다 (확인 카드가 위에 있다)
+            val justParked = s.elapsedMin(now) < 10 && s.farFrom == null
             addView(Ui.text(this@MainActivity, if (justParked) "${s.lotName}에 세웠어요" else "주차 중 · ${s.destName}", 28, Ui.ACCENT_TEXT, 700))
             if (justParked && s.hasBenefit) {
                 // 세운 직후 할 일 하나: 혜택 가게 이용하고 등록하기 (PRD S7)
@@ -563,6 +567,22 @@ class MainActivity : Activity() {
                 }
             }
         }, lp(MATCH, WRAP))
+    }
+
+    /** 추천과 다른 곳에 세운 것 같을 때: 차 근처 후보 중 고르거나 "여기 맞아요". */
+    private fun placeCheck(s: ParkingSession): View = Ui.vbox(this, 16).apply {
+        val far = s.farFrom!!
+        setPadding(dp(40), dp(28), dp(40), dp(28))
+        background = Ui.rounded(Ui.AMBER_BG, 32, this@MainActivity, Ui.AMBER, 2)
+        addView(Ui.text(this@MainActivity, "${s.lotName}에서 ${far.distanceM}m 떨어진 곳이에요 · 어디에 세우셨나요?", 30, Ui.TEXT, 900))
+        addView(Ui.hbox(this@MainActivity, 16).apply {
+            ParkCheck.guesses(s, recommendation?.options.orEmpty()).forEach { o ->
+                addView(Ui.button(this@MainActivity, o.name, false, 88, 26) {
+                    tracker.relocate(Candidate(o, recommendation?.storeName, s.destName))
+                }.apply { setPadding(dp(24), 0, dp(24), 0); background = Ui.rounded(Ui.CARD, 20, this@MainActivity) }, lp(0, dp(88), 1f))
+            }
+            addView(Ui.button(this@MainActivity, "${s.lotName} 맞아요", true, 88, 26) { tracker.confirmPlace() }, lp(0, dp(88), 1f))
+        })
     }
 
     /** 주행 중 (PRD S3·S4): 고른 곳(경유 중이면 그곳)을 크게, 다른 후보 3곳은 한 줄씩. 탭 한 번이면 경유지 변경. */
@@ -763,6 +783,7 @@ class MainActivity : Activity() {
     private companion object {
         const val EXTRA_SKIP_MIN = "skipMin"
         const val REQ_MIC = 2
+        const val FUSED_LOCATION = "pleos.car.permission.FUSED_LOCATION"
         const val EXTRA_SAY = "say"
         const val EXTRA_DEST = "dest"
         const val EXTRA_REMAIN = "remain"

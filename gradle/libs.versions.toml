@@ -7,6 +7,7 @@ pleos-vehicle = "2.3.2"
 pleos-navihelper = "3.0.5"
 pleos-tts = "3.3.1"
 pleos-stt = "3.3.1"
+pleos-location = "1.1.3"
 
 [libraries]
 junit = { module = "junit:junit", version.ref = "junit" }
@@ -15,6 +16,7 @@ pleos-vehicle = { module = "ai.pleos.playground:Vehicle", version.ref = "pleos-v
 pleos-navihelper = { module = "ai.pleos.playground:NaviHelper", version.ref = "pleos-navihelper" }
 pleos-tts = { module = "ai.pleos.playground:TextToSpeech", version.ref = "pleos-tts" }
 pleos-stt = { module = "ai.pleos.playground:SpeechToText", version.ref = "pleos-stt" }
+pleos-location = { module = "ai.pleos.playground:FusedLocation", version.ref = "pleos-location" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
