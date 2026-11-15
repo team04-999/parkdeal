@@ -71,6 +71,8 @@ data class Lot(
     val fee: Fee? = null,
     /** 요청 좌표(목적지)에서의 거리(m). */
     val distanceM: Int? = null,
+    /** 이 주차장을 무료로 쓰게 해 주는 가게 혜택(같은 건물 다른 가게 포함). 서버가 안 주면 빈 목록. */
+    val deals: List<Deal> = emptyList(),
 )
 
 @Serializable
@@ -88,3 +90,28 @@ data class Fee(
     val source: String,
     val observedAt: String,
 )
+
+/** 주차장에 딸린 다른 가게 혜택. 필드 뜻은 [Benefit] 과 같다. */
+@Serializable
+data class Deal(
+    val storeId: String,
+    val storeName: String,
+    val category: String? = null,
+    val allFree: Boolean = false,
+    val type: String,
+    val condition: String? = null,
+    val redeem: String = "unknown",
+    val freeMin: Int? = null,
+    val tiers: List<Tier> = emptyList(),
+    val validDays: String? = null,
+    val validFrom: String? = null,
+    val validTo: String? = null,
+    val maxCars: Int? = null,
+    val needsReview: Boolean = false,
+) {
+    /** 목적지 혜택과 같은 방식으로 계산하려고 [Benefit] 으로 바꾼다. */
+    fun asBenefit() = Benefit(
+        id = 0, type = type, condition = condition, redeem = redeem, freeMin = freeMin, tiers = tiers,
+        validDays = validDays, validFrom = validFrom, validTo = validTo, maxCars = maxCars, needsReview = needsReview,
+    )
+}

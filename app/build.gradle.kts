@@ -38,6 +38,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            // 로컬 서버로 시험할 때: ./gradlew :app:assembleDebug -PparkdealApi=http://10.0.2.2:4000
+            (project.findProperty("parkdealApi") as String?)?.let { buildConfigField("String", "PARKDEAL_API_BASE", "\"$it\"") }
+        }
         release {
             // 키가 없는 곳(CI)에서는 서명 없이 빌드만 확인한다
             signingConfig = signingConfigs.findByName("release")

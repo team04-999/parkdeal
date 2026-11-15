@@ -267,7 +267,10 @@ class MainActivity : Activity() {
         val st = tracker.state
         val o = selected() ?: return
         if (st.session != null || st.reminder != null) return
-        tracker.candidate = Candidate(o, recommendation?.storeName, shownName())
+        // 목적지 혜택이 없고 다른 가게 혜택을 쓰는 곳이면, 그 가게 기준으로 주차를 기록한다 (출차 때 그 가게 등록을 묻는다)
+        val other = o.other
+        tracker.candidate = if (o.freeMin == 0 && other != null) Candidate(other.applyTo(o), other.storeName, shownName())
+            else Candidate(o, recommendation?.storeName, shownName())
         ParkingService.ensure(this)
     }
 
@@ -363,6 +366,10 @@ class MainActivity : Activity() {
         addView(numberPin(i + 1, selected))
         addView(Ui.vbox(this@MainActivity, 6).apply {
             addView(Ui.text(this@MainActivity, o.name, if (selected) 30 else 28, Ui.TEXT, 700).apply { maxLines = 1 })
+            o.other?.takeIf { o.reason.isEmpty() }?.let { d ->
+                // 같은 건물 다른 가게 혜택 (PRD "혜택 가게 바꾸기")
+                addView(Ui.text(this@MainActivity, "${d.reason} → ${Ui.won(d.fee)}", 22, Ui.ACCENT_TEXT, 700).apply { maxLines = 1 })
+            }
             if (o.reason.isNotEmpty()) {
                 // 혜택 한 줄 + 조건(평일만·18:00 이후·1대까지)
                 val limits = o.how?.limits.orEmpty()

@@ -116,4 +116,36 @@ class RecommenderTest {
         assertEquals("카운터에 차량번호를 알려 주세요", how.redeem)
         assertEquals(listOf("1대까지"), how.limits)
     }
+
+    @Test fun `목적지 혜택이 없는 주차장에 다른 가게 혜택이 있으면 따로 붙인다 - 요금 순서는 일반 요금 기준`() {
+        val l = lot(5, "자양호반써밋", 400, fee(60, 1000, 60, 1000)).copy(
+            deals = listOf(com.parkdeal.core.api.Deal(storeId = "7", storeName = "은비스브레드", allFree = true, type = "free")),
+        )
+        val r = Recommender.recommend(DestinationResponse(store, emptyList()), LotsResponse(listOf(l)), 120)
+        val o = r.options.single()
+        assertEquals(2000, o.fee)
+        assertEquals("은비스브레드 이용 시 무료", o.other!!.reason)
+        assertEquals(0, o.other!!.fee)
+    }
+
+    @Test fun `다른 가게 혜택 중 이 체류 시간에 가장 싸지는 것을 고른다`() {
+        val l = lot(6, "B", 100, fee(60, 1000, 60, 1000)).copy(
+            deals = listOf(
+                com.parkdeal.core.api.Deal(storeId = "1", storeName = "카페", type = "all_free_min", condition = "purchase", freeMin = 60),
+                com.parkdeal.core.api.Deal(storeId = "2", storeName = "식당", type = "all_free_min", condition = "meal", freeMin = 120),
+            ),
+        )
+        val o = Recommender.recommend(DestinationResponse(store, emptyList()), LotsResponse(listOf(l)), 180).options.single()
+        assertEquals("식당 식사 시 2시간 무료", o.other!!.reason)
+        assertEquals(1000, o.other!!.fee)
+    }
+
+    @Test fun `일반 요금을 몰라도 다른 가게 혜택으로 무료면 요금 모름보다 앞에 둔다`() {
+        val unknown = lot(1, "요금모름", 50, null)
+        val freeByDeal = lot(2, "혜택있음", 300, null).copy(
+            deals = listOf(com.parkdeal.core.api.Deal(storeId = "3", storeName = "임팩트", allFree = true, type = "free")))
+        val paid = lot(3, "유료", 100, fee(60, 5000, 60, 5000))
+        val r = Recommender.recommend(DestinationResponse(store, emptyList()), LotsResponse(listOf(unknown, freeByDeal, paid)), 60)
+        assertEquals(listOf("혜택있음", "유료", "요금모름"), r.options.map { it.name })
+    }
 }
