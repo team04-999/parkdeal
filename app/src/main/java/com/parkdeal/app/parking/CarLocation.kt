@@ -30,7 +30,8 @@ object CarLocation {
             override fun onLocation(lat: Double, lng: Double) {
                 main.post {
                     if (done) return@post
-                    Log.d(TAG, "차 위치 $lat,$lng")
+                    // 정확한 위치는 release 로그에 남기지 않는다 (개인 위치정보)
+                    if (com.parkdeal.app.BuildConfig.DEBUG) Log.d(TAG, "차 위치 $lat,$lng") else Log.d(TAG, "차 위치 받음")
                     finish()
                     onResult(lat, lng)
                 }
