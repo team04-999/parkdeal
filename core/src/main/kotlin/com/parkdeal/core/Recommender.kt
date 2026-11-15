@@ -30,6 +30,10 @@ data class ParkingOption(
     val other: OtherDeal? = null,
     /** 실시간으로 지금 만차. 순위를 뒤로 미룬다. */
     val fullNow: Boolean = false,
+    /** 혜택 없이 [stayMin] 분 머물 때 낼 돈. 요금 규칙을 모르면 null. */
+    val normalFee: Int? = null,
+    /** 이 주차장에서 쓸 수 있는 혜택 가게 전부: 목적지 가게 혜택이 있으면 그것이 먼저, 그다음 싼 순 (PRD "다른 혜택 가게로 바꾸기") */
+    val deals: List<OtherDeal> = emptyList(),
 ) {
     /** 약 4km/h(분당 67m), 최소 1분. */
     val walkMinutes: Int get() = maxOf(1, ceil(walkMeters / 67.0).toInt())
@@ -71,6 +75,13 @@ object Recommender {
             if (prev == null || prev.freeMin < option.freeMin) byLot[lot.id] = option
         }
         for (lot in lots.lots) byLot.putIfAbsent(lot.id, option(lot, stayMin, BenefitTerms.NONE, vehicle).copy(other = otherDeal(lot, stayMin)))
+        // 혜택 가게 전체 목록: 목적지 가게(있으면) + 같은 주차장 다른 가게
+        val lotById = (lots.lots + dest.benefits.mapNotNull { it.lot }).associateBy { it.id }
+        for ((id, o) in byLot.toMap()) {
+            val own = if (o.freeMin > 0 || (o.reason.isNotEmpty() && o.fee == 0)) storeName?.let { OtherDeal(it, o.reason, o.fee ?: 0, o.how ?: BenefitHow(null, emptyList(), false), o.freeMin) } else null
+            val others = lotById[id]?.let { allDeals(it, stayMin) }.orEmpty().filter { it.storeName != storeName }
+            byLot[id] = o.copy(deals = listOfNotNull(own) + others)
+        }
 
         // 이 차가 못 들어가는 곳은 아무리 싸도 맨 뒤
         val sorted = byLot.values.sortedWith(compareBy({ it.blocked }, { costOf(it) + it.walkMeters * WON_PER_WALK_METER + if (it.fullNow) FULL_PENALTY else 0 }))
@@ -81,8 +92,13 @@ object Recommender {
 
     /** 이 주차장의 다른 가게 혜택 중 [stayMin] 머물 때 가장 싸지는 것. 일반 요금보다 싸지지 않으면 null. */
     private fun otherDeal(lot: Lot, stayMin: Int): OtherDeal? {
+        val normal = FeeRule.from(lot.fee)?.feeFor(stayMin)
+        return allDeals(lot, stayMin).filter { normal == null || it.fee < normal }.minByOrNull { it.fee }
+    }
+
+    /** 이 주차장의 다른 가게 혜택 전부, 싼 순. */
+    private fun allDeals(lot: Lot, stayMin: Int): List<OtherDeal> {
         val rule = FeeRule.from(lot.fee)
-        val normal = rule?.feeFor(stayMin)
         return lot.deals.mapNotNull { d ->
             val terms = BenefitTerms.of(d.asBenefit(), d.storeName)
             val fee = when {
@@ -92,7 +108,7 @@ object Recommender {
             }
             // 전부 무료는 하루로 본다 (출차 요금 계산이 0원이 되게)
             OtherDeal(d.storeName, terms.reason, fee, BenefitHow.of(d.asBenefit()), if (terms.allFree) 24 * 60 else terms.freeMin)
-        }.filter { normal == null || it.fee < normal }.minByOrNull { it.fee }
+        }.sortedBy { it.fee }
     }
 
     private fun option(lot: Lot, stayMin: Int, terms: BenefitTerms, vehicle: Vehicle): ParkingOption {
@@ -110,6 +126,7 @@ object Recommender {
             freeMin = terms.freeMin, reason = terms.reason, rule = rule,
             notes = listOfNotNull(notes.blockReason) + notes.badges.filter { it != notes.blockReason },
             blocked = notes.blocked,
+            normalFee = rule?.feeFor(stayMin),
             fullNow = notes.fullNow,
         )
     }

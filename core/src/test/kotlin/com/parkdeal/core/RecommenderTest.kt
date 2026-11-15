@@ -157,4 +157,15 @@ class RecommenderTest {
         assertEquals(listOf("남부순환로181길 41 주차장", "다른 주차장"), r.options.map { it.name })
         assertEquals(2, r.options.first().lotId) // 요금을 아는 쪽이 더 낫다
     }
+
+    @Test fun `후보마다 일반 요금과 혜택 가게 전체 목록(목적지 가게 먼저)`() {
+        val l = lot(5, "자양호반써밋", 400, fee(60, 1000, 60, 1000)).copy(deals = listOf(
+            com.parkdeal.core.api.Deal(storeId = "7", storeName = "은비스브레드", allFree = true, type = "free"),
+            com.parkdeal.core.api.Deal(storeId = "8", storeName = "커스텀커피", type = "all_free_min", condition = "purchase", freeMin = 60),
+        ))
+        val o = Recommender.recommend(DestinationResponse(store, emptyList()), LotsResponse(listOf(l)), 120).options.single()
+        assertEquals(2000, o.normalFee)
+        assertEquals(listOf("은비스브레드", "커스텀커피"), o.deals.map { it.storeName })
+        assertEquals(listOf(0, 1000), o.deals.map { it.fee })
+    }
 }

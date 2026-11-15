@@ -18,7 +18,7 @@ interface GearSource {
 }
 
 /** 지금 P단에 넣으면 주차할 곳으로 보는 주차장: 추천에서 고른 것. */
-data class Candidate(val option: ParkingOption, val storeName: String?, val destName: String)
+data class Candidate(val option: ParkingOption, val storeName: String?, val destName: String, val plannedMin: Int? = null, val stop: Boolean = false)
 
 /** 기기에 저장하는 주차 상태. session·reminder 가 둘 다 null 이면 대기 중. [history] 는 최근 것이 뒤. */
 @Serializable
@@ -115,7 +115,7 @@ class ParkingTracker(
         val s = ParkingSession(
             startedAt = clock(), lotId = o.lotId, lotName = o.name, lat = o.lat, lng = o.lng, rule = o.rule,
             freeMin = o.freeMin, storeName = c.storeName.takeIf { o.freeMin > 0 }, reason = o.reason, destName = c.destName,
-            walkMeters = o.walkMeters, redeemHint = o.how?.redeem.takeIf { o.freeMin > 0 },
+            walkMeters = o.walkMeters, redeemHint = o.how?.redeem.takeIf { o.freeMin > 0 }, plannedMin = c.plannedMin, stop = c.stop,
         )
         update(state.copy(session = s, reminder = null))
         return s
@@ -142,6 +142,20 @@ class ParkingTracker(
             storeName = c.storeName.takeIf { o.freeMin > 0 }, reason = o.reason, walkMeters = o.walkMeters,
             redeemHint = o.how?.redeem.takeIf { o.freeMin > 0 }, farFrom = null,
         )))
+    }
+
+    /** 같은 주차장의 다른 혜택 가게로 바꾼다 (PRD S7 "다른 혜택 가게로 바꾸기"). 출차 때 그 가게 등록을 묻는다. */
+    @Synchronized
+    fun switchDeal(d: com.parkdeal.core.OtherDeal) {
+        val s = state.session ?: return
+        update(state.copy(session = s.copy(storeName = d.storeName, freeMin = d.freeMin, reason = d.reason, redeemHint = d.how.redeem)))
+    }
+
+    /** 기록 없이 진행 중 세션을 버린다 (정차 중 "5분 넘게 걸리면 · 주차장 보기"). */
+    @Synchronized
+    fun cancelSession() {
+        if (state.session == null) return
+        update(state.copy(session = null))
     }
 
     /** "여기 맞아요": 떨어져 있다는 표시만 지운다. */
@@ -178,6 +192,12 @@ class ParkingTracker(
 
     private fun end(): ExitReminder? {
         val s = state.session ?: return null
+        if (s.stop) {
+            // 정차는 낼 돈도 혜택도 없다: 출차 확인 없이 끝낸다
+            candidate = null
+            update(state.copy(session = null))
+            return null
+        }
         if (clock() - s.startedAt < minSessionMs) {
             // 기어가 잠깐 흔들린 것. 주차 기록도 리마인드도 남기지 않는다
             update(state.copy(session = null))

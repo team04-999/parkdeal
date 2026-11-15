@@ -125,3 +125,23 @@ data class Live(val total: Int, val available: Int, val updatedAt: String = "")
 /** 실제 걷는 거리(m)·시간(분). */
 @Serializable
 data class WalkResponse(val distanceM: Int, val walkMin: Int, val source: String = "")
+
+/** 5분 정차 허용 구간. [covered] 가 false 면 이 구는 데이터가 없다. */
+@Serializable
+data class StopsResponse(
+    val covered: Boolean = false,
+    val gu: String? = null,
+    val road: String? = null,
+    val coveredGus: List<String> = emptyList(),
+    val segments: List<StopSegment> = emptyList(),
+)
+
+@Serializable
+data class StopSegment(
+    val road: String,
+    val desc: String,
+    val lengthM: Int? = null,
+    val sameRoad: Boolean = false,
+    val allowedNow: Boolean = false,
+    val today: String? = null,
+)

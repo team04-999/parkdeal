@@ -17,9 +17,11 @@ object Ui {
     private class Palette(
         val win: String, val card: String, val card2: String, val ink: String, val ink2: String, val ink3: String,
         val blue: String, val blueBg: String, val hot: String, val hotBg: String,
+        /** 경고 띠(PRD .stale): 낮에는 주황 바탕에 검은 글자, 밤에는 어두운 바탕에 주황 글자 */
+        val staleBg: String, val staleFg: String,
     )
-    private val DAY = Palette("#ECECF0", "#FFFFFF", "#F1F1F5", "#0D0D0D", "#32353F", "#5B606C", "#5A46FA", "#ECE9FF", "#C26A00", "#FFF1DD")
-    private val NIGHT = Palette("#0D0D0D", "#171717", "#32353F", "#FAFAFA", "#AAAAAA", "#8F95A1", "#8D84FB", "#221E3D", "#FF9900", "#33220A")
+    private val DAY = Palette("#ECECF0", "#FFFFFF", "#F6F6F9", "#0D0D0D", "#32353F", "#5B606C", "#5A46FA", "#ECE9FF", "#C26A00", "#FFF1DD", "#FF9900", "#0D0D0D")
+    private val NIGHT = Palette("#0D0D0D", "#171717", "#32353F", "#FAFAFA", "#AAAAAA", "#8F95A1", "#8D84FB", "#221E3D", "#FF9900", "#33220A", "#33220A", "#FF9900")
     private var p = DAY
     var night = false
         private set
@@ -47,6 +49,8 @@ object Ui {
     val AMBER_BG get() = c(p.hotBg)
     val GLEO get() = c(p.blue)
     val GLEO_BG get() = c(p.blueBg)
+    val STALE_BG get() = c(p.staleBg)
+    val STALE_FG get() = c(p.staleFg)
     val ON_ACCENT = Color.WHITE
 
     fun Context.dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
