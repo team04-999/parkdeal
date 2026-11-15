@@ -73,6 +73,8 @@ data class Lot(
     val distanceM: Int? = null,
     /** 이 주차장을 무료로 쓰게 해 주는 가게 혜택(같은 건물 다른 가게 포함). 서버가 안 주면 빈 목록. */
     val deals: List<Deal> = emptyList(),
+    /** 서울시 실시간 빈자리 (공영 일부). 없으면 null. */
+    val live: Live? = null,
 )
 
 @Serializable
@@ -115,3 +117,7 @@ data class Deal(
         validDays = validDays, validFrom = validFrom, validTo = validTo, maxCars = maxCars, needsReview = needsReview,
     )
 }
+
+/** 실시간 빈자리: 전체 [total] 면 중 [available] 면 남음. */
+@Serializable
+data class Live(val total: Int, val available: Int, val updatedAt: String = "")

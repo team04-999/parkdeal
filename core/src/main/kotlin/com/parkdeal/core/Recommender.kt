@@ -28,6 +28,8 @@ data class ParkingOption(
     val how: BenefitHow? = null,
     /** 목적지 가게가 아닌 다른 가게 혜택으로 더 싸지는 경우 (PRD "혜택 가게 바꾸기"). */
     val other: OtherDeal? = null,
+    /** 실시간으로 지금 만차. 순위를 뒤로 미룬다. */
+    val fullNow: Boolean = false,
 ) {
     /** 약 4km/h(분당 67m), 최소 1분. */
     val walkMinutes: Int get() = maxOf(1, ceil(walkMeters / 67.0).toInt())
@@ -51,6 +53,8 @@ object Recommender {
     private const val UNKNOWN_FEE = 1_000_000
     /** 다른 가게를 따로 이용해야 받는 혜택: 그만큼의 부담을 더해 비교한다. */
     private const val OTHER_STORE_COST = 2_000
+    /** 지금 만차인 곳: 자리를 찾아 돌 시간을 돈으로 쳐서 뒤로 보낸다 */
+    private const val FULL_PENALTY = 10_000
 
     /** 정렬에 쓰는 낼 돈. 일반 요금을 모르면 다른 가게 혜택을 쓸 때의 돈(+부담), 그것도 없으면 맨 뒤. */
     private fun costOf(o: ParkingOption): Int = o.fee ?: o.other?.let { it.fee + OTHER_STORE_COST } ?: UNKNOWN_FEE
@@ -69,7 +73,7 @@ object Recommender {
         for (lot in lots.lots) byLot.putIfAbsent(lot.id, option(lot, stayMin, BenefitTerms.NONE, vehicle).copy(other = otherDeal(lot, stayMin)))
 
         // 이 차가 못 들어가는 곳은 아무리 싸도 맨 뒤
-        val sorted = byLot.values.sortedWith(compareBy({ it.blocked }, { costOf(it) + it.walkMeters * WON_PER_WALK_METER }))
+        val sorted = byLot.values.sortedWith(compareBy({ it.blocked }, { costOf(it) + it.walkMeters * WON_PER_WALK_METER + if (it.fullNow) FULL_PENALTY else 0 }))
         return Recommendation(storeName, stayMin, sorted)
     }
 
@@ -104,6 +108,7 @@ object Recommender {
             freeMin = terms.freeMin, reason = terms.reason, rule = rule,
             notes = listOfNotNull(notes.blockReason) + notes.badges.filter { it != notes.blockReason },
             blocked = notes.blocked,
+            fullNow = notes.fullNow,
         )
     }
 }
