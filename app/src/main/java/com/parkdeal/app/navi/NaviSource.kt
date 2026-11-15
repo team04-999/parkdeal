@@ -1,6 +1,8 @@
 package com.parkdeal.app.navi
 
+import ai.pleos.playground.navi.constants.WaypointIndex
 import ai.pleos.playground.navi.data.DestinationInfo
+import ai.pleos.playground.navi.data.RequestWaypointInfo
 import ai.pleos.playground.navi.data.RouteInfo
 import ai.pleos.playground.navi.helper.NaviHelper
 import ai.pleos.playground.navi.helper.listener.NaviHelperEventListener
@@ -47,6 +49,18 @@ class NaviSource(context: Context, private val onDestination: (Place, remainMete
     fun route(place: Place): Boolean {
         if (!available) { pending = place; return false }
         navi.requestRoute(RouteInfo(latitude = place.lat, longitude = place.lng, poiName = place.name, poiId = "", address = "", poiSubId = ""))
+        return true
+    }
+
+    /**
+     * 목적지(가게)는 두고 [lot] 을 첫 경유지로 넣는다. 이미 넣은 경유지는 바꾼다.
+     * 안내 중인 경로가 없으면(내비 목적지가 없을 때) [lot] 으로 경로를 건다.
+     */
+    fun via(lot: Place, hasRoute: Boolean): Boolean {
+        if (!available) return false
+        if (!hasRoute) return route(lot)
+        runCatching { navi.removeWaypoint(WaypointIndex.ALL) }
+        navi.addWaypoint(RequestWaypointInfo(lot.lat, lot.lng, lot.name, WaypointIndex.FIRST, "", "", "", ""))
         return true
     }
 

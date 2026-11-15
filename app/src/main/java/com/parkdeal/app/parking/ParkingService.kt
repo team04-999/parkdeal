@@ -41,6 +41,8 @@ class ParkingService : Service() {
         voice = Voice(this)
         gears = VehicleGearSource(this)
         gears.start(onGear = ::onGear, onUnavailable = { Log.w(TAG, "기어를 읽을 수 없음: ${it.message}") })
+        // 기준 기어를 잡은 뒤: 앱이 꺼진 사이 출발했으면 출차로 처리
+        handler.postDelayed({ handle(tracker.settle()) }, ParkingTracker.SETTLE_MS + 200)
         scheduleWarn()
         Parking.observe(onState)
         Log.d(TAG, "service start session=${tracker.state.session?.lotName} candidate=${tracker.candidate?.option?.name}")
@@ -53,9 +55,14 @@ class ParkingService : Service() {
 
     private fun onGear(gear: Gear) {
         Log.d(TAG, "gear $gear")
-        when (val e = tracker.onGear(gear)) {
+        handle(tracker.onGear(gear))
+    }
+
+    private fun handle(event: ParkingEvent?) {
+        when (val e = event) {
             is ParkingEvent.Started -> {
                 Log.d(TAG, "parking started ${e.session.lotName} free=${e.session.freeMin}")
+                voice.speak(ParkingTalk.parked(e.session))
                 scheduleWarn()
             }
             is ParkingEvent.Ended -> {

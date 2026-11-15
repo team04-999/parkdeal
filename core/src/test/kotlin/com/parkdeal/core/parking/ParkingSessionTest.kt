@@ -73,6 +73,16 @@ class ParkingSessionTest {
         )
     }
 
+    @Test fun `주차 직후 - 혜택 가게 이용과 등록을 안내한다`() {
+        val s = session().copy(walkMeters = 120)
+        assertEquals("커먼그라운드에 세웠어요. 아마존바베큐 이용하고 주차 등록하세요. 목적지까지 걸어서 2분이에요.", ParkingTalk.parked(s))
+    }
+
+    @Test fun `주차 직후 - 혜택이 없으면 위치와 걷는 시간만`() {
+        val s = session(freeMin = 0, store = null).copy(walkMeters = 0)
+        assertEquals("커먼그라운드에 세웠어요. 목적지까지 걸어서 1분이에요.", ParkingTalk.parked(s))
+    }
+
     @Test fun `출차 리마인드 - 혜택을 등록하지 않으면 낼 돈을 알려준다`() {
         val s = session()
         assertEquals(

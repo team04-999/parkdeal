@@ -19,7 +19,9 @@ class ParkingTrackerTest {
     )
     private val candidate = Candidate(option, storeName = "조이치과의원 봉천", destName = "조이치과의원 봉천")
 
-    private fun tracker() = ParkingTracker(store) { now }
+    /** 기존 시나리오 테스트는 시간 흐름을 보지 않으므로 흔들림 거르기를 끈다. */
+    private fun tracker() = ParkingTracker(store, settleMs = 0, minSessionMs = 0) { now }
+    private fun realTracker() = ParkingTracker(store) { now }
 
     @Test fun `첫 기어 값은 기준으로만 쓴다 - 원래 P 였던 것을 주차 시작으로 보지 않는다`() {
         val t = tracker().apply { this.candidate = this@ParkingTrackerTest.candidate }
@@ -35,6 +37,7 @@ class ParkingTrackerTest {
         assertEquals(60, e.session.freeMin)
         assertEquals("조이치과의원 봉천", e.session.storeName)
         assertEquals(t0, e.session.startedAt)
+        assertEquals(60, e.session.walkMeters)
     }
 
     @Test fun `후보가 없으면 P 로 바꿔도 주차를 시작하지 않는다`() {
@@ -127,6 +130,38 @@ class ParkingTrackerTest {
         assertNull(t.backdate(-30))
         assertNull(t.backdate(24 * 60 + 1))
         assertEquals(t0, t.state.session!!.startedAt)
+    }
+
+    @Test fun `시작 직후 2초 안에 몰려 온 기어 값은 기준으로만 쓴다`() {
+        val t = realTracker().apply { this.candidate = this@ParkingTrackerTest.candidate }
+        // 실제 에뮬레이터: 리스너 등록 직후 D, P(이전 값), D 가 0.1초 안에 들어왔다
+        assertNull(t.onGear(Gear.DRIVE)); now += 15
+        assertNull(t.onGear(Gear.PARK)); now += 60
+        assertNull(t.onGear(Gear.DRIVE))
+        assertNull(t.state.session)
+        assertNull(t.state.reminder)
+        // 2초가 지나면 정상으로 받는다. 기준은 마지막 값 D
+        now += 3_000
+        assertTrue(t.onGear(Gear.PARK) is ParkingEvent.Started)
+    }
+
+    @Test fun `10초 안에 끝난 주차는 잘못 감지한 것으로 보고 리마인드 없이 버린다`() {
+        val t = realTracker().apply { this.candidate = this@ParkingTrackerTest.candidate }
+        t.onGear(Gear.DRIVE); now += 3_000
+        t.onGear(Gear.PARK); now += 2_000
+        assertNull(t.onGear(Gear.DRIVE))
+        assertNull(t.state.session)
+        assertNull(t.state.reminder)
+        assertEquals(this.candidate, t.candidate) // 후보는 그대로 둔다
+    }
+
+    @Test fun `주차 중에 앱이 다시 떴는데 이미 D 면 기준을 잡은 뒤 출차로 본다`() {
+        tracker().apply { this.candidate = this@ParkingTrackerTest.candidate; onGear(Gear.DRIVE); onGear(Gear.PARK) }
+        now += 30 * min
+        val t = realTracker()
+        assertNull(t.onGear(Gear.DRIVE)) // 기준 잡는 중
+        now += 2_500
+        assertTrue(t.settle() is ParkingEvent.Ended)
     }
 
     private class MemoryStore : StateStore {
