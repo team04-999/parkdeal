@@ -141,7 +141,7 @@ class ParkingService : Service() {
         nm.createNotificationChannel(NotificationChannel(CHANNEL_ALERT, "주차 알림", NotificationManager.IMPORTANCE_HIGH))
         val n = Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle("ParkDeal")
+            .setContentTitle(getString(com.parkdeal.app.R.string.app_name)) // "빡딜" (검토판 C5)
             .setContentText("P단에 넣으면 주차 시간을 챙겨 드려요")
             .setContentIntent(openApp(0))
             .build()
@@ -163,9 +163,14 @@ class ParkingService : Service() {
         private fun needed(t: ParkingTracker) = t.candidate != null || t.state.session != null
 
         /** 후보를 정했거나 주차 중이면 서비스를 띄운다. 할 일이 없으면 띄우지 않는다. */
+        /**
+         * Android 12+ 는 앱이 뒤에 있을 때 포그라운드 서비스 시작을 막는다(ForegroundServiceStartNotAllowedException).
+         * 화면이 앞에 있을 때만 부르고, 그래도 거부되면 다음에 앞으로 올 때 다시 시도한다. 앱을 죽이지 않는다.
+         */
         fun ensure(context: Context) {
             if (!needed(Parking.tracker(context))) return
-            context.startForegroundService(Intent(context, ParkingService::class.java))
+            runCatching { context.startForegroundService(Intent(context, ParkingService::class.java)) }
+                .onFailure { Log.w(TAG, "서비스 시작 거부(앱이 뒤에 있음): ${it.javaClass.simpleName}") }
         }
     }
 }

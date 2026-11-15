@@ -182,7 +182,14 @@ class MainActivity : Activity() {
     }
 
     /** 경유지 도착(PRD S6): 자리가 없을 때 갈 다음 후보까지 말한다. */
+    /** 경유지(고른 주차장) 근처에 왔다: 주행 화면을 "곧 도착해요 / 자리가 없으면" 으로 바꾼다. 주차하거나 3분 지나면 되돌린다. */
+    private var arrivedAt: String? = null
+    private val clearArrived = Runnable { arrivedAt = null; render() }
+
     private fun onWaypointArrived(name: String) {
+        arrivedAt = name
+        main.removeCallbacks(clearArrived); main.postDelayed(clearArrived, 3 * 60_000L)
+        render()
         val opts = recommendation?.options ?: return
         val next = opts.firstOrNull { it.name != name }
         voice.speak(NaviTalk.waypointArrived(name, next))
@@ -203,8 +210,12 @@ class MainActivity : Activity() {
         return c in '가'..'힣' && (c - '가') % 28 != 0 && (c - '가') % 28 != 8 // ㄹ 받침은 "로"
     }
 
+    /** 화면이 앞에 있는지. 포그라운드 서비스는 이때만 시작할 수 있다. */
+    private var foreground = false
+
     override fun onStart() {
         super.onStart()
+        foreground = true
         Parking.observe(onState)
         main.post(tick)
         // 주차 중이면 서비스를 다시 띄운다 (프로세스가 다시 만들어진 경우)
@@ -212,6 +223,7 @@ class MainActivity : Activity() {
     }
 
     override fun onStop() {
+        foreground = false
         Parking.unobserve(onState)
         main.removeCallbacks(tick)
         super.onStop()
@@ -276,7 +288,9 @@ class MainActivity : Activity() {
     }
 
     private fun walkText(o: ParkingOption) =
-        walks[o.lotId]?.let { "걸어서 ${it.walkMin}분 · ${it.distanceM}m" } ?: "걸어서 약 ${o.walkMinutes}분"
+        walks[o.lotId]?.let { "걸어서 ${it.walkMin}분 · ${it.distanceM}m" }
+            // 같은 건물·바로 옆이면 보행 경로가 나오지 않는다 (검토판 A3)
+            ?: if (o.walkMeters < NEAR_M) "목적지 바로 앞" else "걸어서 약 ${o.walkMinutes}분"
 
     private fun selected(): ParkingOption? = recommendation?.options?.getOrNull(index)
 
@@ -304,7 +318,7 @@ class MainActivity : Activity() {
         val other = o.other
         tracker.candidate = if (o.freeMin == 0 && other != null) Candidate(other.applyTo(o), other.storeName, shownName())
             else Candidate(o, recommendation?.storeName, shownName())
-        ParkingService.ensure(this)
+        if (foreground) ParkingService.ensure(this) // 뒤에 있을 때는 시작할 수 없다(Android 12+)
     }
 
     private fun render() {
@@ -315,6 +329,7 @@ class MainActivity : Activity() {
         content.setBackgroundColor(Ui.BG)
         syncCandidate()
         val st = tracker.state
+        if (st.session != null) arrivedAt = null
         val r = recommendation
         // 주행 제한 중에는 줄인 화면만: 고른 곳 하나 + 짧은 목록, 입력·지도·긴 글 없음
         val drive = driving.restricted
@@ -331,7 +346,8 @@ class MainActivity : Activity() {
                 setPadding(dp(36), dp(22), dp(36), dp(22))
                 background = Ui.rounded(Ui.GLEO_BG, 24, this@MainActivity, Ui.GLEO, 2)
                 elevation = dp(8).toFloat()
-            }, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(24) })
+            // 버튼 줄 바로 위에 띄운다. 위쪽에 두면 머무를 시간 버튼을 가린다 (검토판 A6)
+            }, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(if (compact()) 200 else 190) })
         }
     }
 
@@ -366,8 +382,15 @@ class MainActivity : Activity() {
             gravity = Gravity.TOP
             // 앱 안에 지도를 그리지 않는다. 위치는 바로 옆 Pleos 내비 지도가 보여준다: 카드를 누르면 경유지로 들어간다 (PRD 보기 ①)
             addView(Ui.vbox(this@MainActivity, 14).apply {
-                opts.forEachIndexed { i, o -> addView(optionRow(i, o, i == index), lp(MATCH, WRAP)) }
-                addView(Ui.grow(this@MainActivity))
+                // 목록만 스크롤한다. 반쪽 창에서 카드가 높아져도 아래 버튼 줄이 밀려나지 않게 (검토판 E1)
+                addView(android.widget.ScrollView(this@MainActivity).apply {
+                    isVerticalScrollBarEnabled = false
+                    addView(Ui.vbox(this@MainActivity, 14).apply {
+                        opts.forEachIndexed { i, o -> addView(optionRow(i, o, i == index), lp(MATCH, WRAP)) }
+                        // "다른 데는?"으로 6위 이하를 고르면 그 후보도 목록 끝에 보여준다
+                        r.options.getOrNull(index)?.takeIf { index >= opts.size }?.let { addView(optionRow(index, it, true), lp(MATCH, WRAP)) }
+                    })
+                }, lp(MATCH, 0, 1f))
                 addView(Ui.hbox(this@MainActivity, 16).apply {
                     addView(Ui.text(this@MainActivity, "P단에 넣으면 ${index + 1}번 주차장으로 주차 시간을 챙겨 드려요", 24, Ui.ACCENT_TEXT, 700), lp(0, WRAP, 1f))
                     // 기어를 읽을 수 없는 차를 위한 수동 시작
@@ -376,7 +399,7 @@ class MainActivity : Activity() {
                     }, lp(WRAP, dp(56)))
                 })
                 addView(Ui.hbox(this@MainActivity, 20).apply {
-                    val o = opts[index]
+                    val o = r.options.getOrNull(index) ?: opts.first()
                     val guided = follower.guiding == o.name
                     addView(Ui.button(this@MainActivity, if (guided) "${index + 1}번 경유 중" else "${index + 1}번 경유지로", true, 104, 34) {
                         guide(o); render()
@@ -600,7 +623,8 @@ class MainActivity : Activity() {
         addView(Ui.vbox(this@MainActivity, 20).apply {
             setPadding(dp(56), dp(44), dp(56), dp(44))
             background = Ui.rounded(Ui.CARD, 40, this@MainActivity, if (guided >= 0) Ui.ACCENT else null, 2)
-            addView(Ui.text(this@MainActivity, if (guided >= 0) "경유 중" else "주차는 여기로", 30, Ui.ACCENT_TEXT, 700))
+            val arrived = arrivedAt != null && arrivedAt == top.name
+            addView(Ui.text(this@MainActivity, when { arrived -> "곧 도착해요"; guided >= 0 -> "경유 중"; else -> "주차는 여기로" }, 30, Ui.ACCENT_TEXT, 700))
             addView(Ui.hbox(this@MainActivity, 32).apply {
                 gravity = Gravity.BOTTOM
                 addView(Ui.text(this@MainActivity, top.name, 56, Ui.TEXT, 900).apply { maxLines = 1 }, lp(0, WRAP, 1f))
@@ -610,7 +634,8 @@ class MainActivity : Activity() {
             addView(Ui.text(this@MainActivity, "${durationText(stayMin)} 머물면 · 목적지까지 ${walkText(top)}", 28, Ui.TEXT2))
             if (guided < 0) addView(Ui.button(this@MainActivity, "여기로 경유", true, 104, 36) { guide(top); render() }, lp(MATCH, dp(104)))
         }, lp(MATCH, WRAP))
-        addView(Ui.text(this@MainActivity, "다른 후보", 24, Ui.MUTED))
+        addView(Ui.text(this@MainActivity, if (arrivedAt == top.name) "자리가 없으면 · 근처 다른 곳 (누르면 바로 경유지 변경)" else "다른 후보", 24,
+            if (arrivedAt == top.name) Ui.TEXT else Ui.MUTED, if (arrivedAt == top.name) 700 else 400))
         opts.withIndex().filter { it.index != topIndex }.take(3).forEach { (i, o) ->
             addView(Ui.hbox(this@MainActivity, 24).apply {
                 setPadding(dp(28), dp(18), dp(28), dp(18))
@@ -783,6 +808,8 @@ class MainActivity : Activity() {
     private companion object {
         const val EXTRA_SKIP_MIN = "skipMin"
         const val REQ_MIC = 2
+        /** 걷는 거리(어림)가 이보다 짧으면 "목적지 바로 앞" */
+        const val NEAR_M = 40
         const val FUSED_LOCATION = "pleos.car.permission.FUSED_LOCATION"
         const val EXTRA_SAY = "say"
         const val EXTRA_DEST = "dest"

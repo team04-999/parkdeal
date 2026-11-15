@@ -148,4 +148,13 @@ class RecommenderTest {
         val r = Recommender.recommend(DestinationResponse(store, emptyList()), LotsResponse(listOf(unknown, freeByDeal, paid)), 60)
         assertEquals(listOf("혜택있음", "유료", "요금모름"), r.options.map { it.name })
     }
+
+    @Test fun `이름이 같은 주차장이 둘이면 더 나은 쪽 하나만 남긴다`() {
+        val a = lot(1, "남부순환로181길 41 주차장", 30, null)
+        val b = lot(2, "남부순환로181길 41 주차장", 150, fee(60, 2000, 60, 2000))
+        val c = lot(3, "다른 주차장", 80, fee(60, 3000, 60, 3000))
+        val r = Recommender.recommend(DestinationResponse(store, emptyList()), LotsResponse(listOf(a, b, c)), 60)
+        assertEquals(listOf("남부순환로181길 41 주차장", "다른 주차장"), r.options.map { it.name })
+        assertEquals(2, r.options.first().lotId) // 요금을 아는 쪽이 더 낫다
+    }
 }

@@ -74,6 +74,8 @@ object Recommender {
 
         // 이 차가 못 들어가는 곳은 아무리 싸도 맨 뒤
         val sorted = byLot.values.sortedWith(compareBy({ it.blocked }, { costOf(it) + it.walkMeters * WON_PER_WALK_METER + if (it.fullNow) FULL_PENALTY else 0 }))
+            // 수집 데이터에 같은 이름으로 다른 주차장이 들어 있는 경우가 있다. 운전자에게는 같은 곳으로 보이니 더 나은 하나만 남긴다
+            .distinctBy { it.name.replace(" ", "") }
         return Recommendation(storeName, stayMin, sorted)
     }
 
